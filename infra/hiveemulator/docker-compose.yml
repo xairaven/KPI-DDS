@@ -1,0 +1,31 @@
+# The lecturer's system that our BMS will observe.
+# Images come prebuilt from the lecturer's GitLab registry.
+name: hiveemulator
+
+services:
+  # Message bus. Communication Control publishes hive events to channel "HiveChannel".
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  # The "dispatcher": registers hives, receives telemetry, sends commands.
+  # Swagger UI: http://localhost:8080/swagger
+  communication-control:
+    image: registry.gitlab.com/kzotkin/hiveemulator/communication-control
+    environment:
+      Redis__ConnectionString: "redis:6379"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+
+  # Web map that shows hives and EW zones: http://localhost:8081
+  map-client:
+    image: registry.gitlab.com/kzotkin/hiveemulator/map-client
+    ports:
+      - "8081:80"
+    volumes:
+      - ./map-config.json:/usr/share/nginx/html/config.json:ro
+    depends_on:
+      - communication-control
