@@ -1,6 +1,9 @@
 # Any logs
 *.log
 
+# Claude settings
+.claude
+
 # Remove folder, that contains RustRover’s project specific settings files.
 .idea/
 
