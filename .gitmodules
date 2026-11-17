@@ -1,0 +1,3 @@
+[submodule "infra/hiveemulator/upstream"]
+	path = infra/hiveemulator/upstream
+	url = https://gitlab.com/kzotkin/hiveemulator.git
