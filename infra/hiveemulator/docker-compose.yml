@@ -2,6 +2,18 @@
 # Images come prebuilt from the lecturer's GitLab registry.
 name: hiveemulator
 
+# Shared settings for every swarm. Each hive below reuses them via "<<: *hivemind"
+# and adds only what is unique: ID, own hostname and start position.
+x-hivemind: &hivemind
+  build:
+    context: ./upstream/src/CommunicationControl
+    dockerfile: ../../../hivemind.Dockerfile
+  image: hivemind:local
+  # HiveMind tries to connect once and exits on failure, so let Docker restart it.
+  restart: on-failure
+  depends_on:
+    - communication-control
+
 services:
   # Message bus. Communication Control publishes hive events to channel "HiveChannel".
   redis:
@@ -29,3 +41,22 @@ services:
       - ./map-config.json:/usr/share/nginx/html/config.json:ro
     depends_on:
       - communication-control
+
+  # Swarms. To add one, copy a block and change the ID, HiveIP and location.
+  hive-1:
+    <<: *hivemind
+    environment:
+      CommunicationConfiguration__CommunicationControlIP: communication-control
+      CommunicationConfiguration__HiveIP: hive-1
+      CommunicationConfiguration__HiveID: "1"
+      CommunicationConfiguration__InitialLocation__Latitude: 48.7195
+      CommunicationConfiguration__InitialLocation__Longitude: 38.0927
+
+  hive-2:
+    <<: *hivemind
+    environment:
+      CommunicationConfiguration__CommunicationControlIP: communication-control
+      CommunicationConfiguration__HiveIP: hive-2
+      CommunicationConfiguration__HiveID: "2"
+      CommunicationConfiguration__InitialLocation__Latitude: 48.6800
+      CommunicationConfiguration__InitialLocation__Longitude: 38.0400
