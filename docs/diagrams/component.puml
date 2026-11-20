@@ -1,0 +1,50 @@
+@startuml component
+title Battle Management System — Component Diagram
+
+skinparam componentStyle uml2
+skinparam shadowing false
+skinparam defaultFontName Sans
+left to right direction
+
+actor "Operator" as Operator
+
+package "Hive Emulator (lecturer)" {
+  [Map Client] as Map
+  [Communication Control] as CC
+  queue "Redis\nchannel HiveChannel" as Redis
+  [HiveMind ×N] as Hive
+}
+
+package "BMS" {
+  [bms-ingest] as Ingest
+  queue "RabbitMQ\nexchange bms.events" as Rabbit
+  [bms-state] as State
+  [bms-deconfliction] as Decon
+  database "Postgres" {
+    database "state" as StateDB
+    database "deconfliction" as DeconDB
+  }
+}
+
+[bms-ui (egui)] as UI
+
+Operator --> Map : zones, move, stop
+Map --> CC : HTTP client API
+CC <--> Hive : HTTP connect, telemetry, commands
+CC --> Redis : PUBLISH hive events
+
+Redis --> Ingest : SUBSCRIBE
+Ingest --> CC : GET /interferences (poll)
+Ingest --> Rabbit : hive.*, zone.*
+
+Rabbit --> State : hive.*, zone.*, saga.*
+State --> Rabbit : alert.*, hive.inactive
+State --> StateDB : SQL
+
+Rabbit --> Decon : alert.proximity, hive.telemetry, zone.*
+Decon --> Rabbit : saga.*
+Decon --> DeconDB : SQL
+Decon --> CC : PATCH /hive (move)
+
+UI --> State : HTTP REST API
+@enduml
