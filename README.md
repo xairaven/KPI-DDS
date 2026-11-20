@@ -16,9 +16,13 @@ University Labs.
 
 ### Docker
 
+```bash
 docker compose -f infra/hiveemulator/docker-compose.yml up -d   # start cc & hivemind
 docker compose -f infra/hiveemulator/docker-compose.yml down    # stop cc & hivemind
+```
 
+```bash
 docker compose -f infra/bms/docker-compose.yml up -d            # start bms
 docker compose -f infra/bms/docker-compose.yml down             # stop (data kept)
 docker compose -f infra/bms/docker-compose.yml down -v          # stop AND wipe data (re-runs init.sql next time)
+```
