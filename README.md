@@ -8,3 +8,6 @@ University Labs.
 
 > [!NOTE]
 > Work in Progress.
+
+- Communication Channel Swagger: http://localhost:8080/swagger
+- Map: http://localhost:8081
