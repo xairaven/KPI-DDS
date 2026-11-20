@@ -1,0 +1,45 @@
+@startwbs wbs
+title Battle Management System — Work Breakdown Structure
+
+* BMS
+** 1. Design (Lab 1)
+*** 1.1 Analyze Hive Emulator\nand its protocol
+*** 1.2 Component diagram
+*** 1.3 Sequence diagrams
+*** 1.4 WBS
+*** 1.5 Report
+** 2. Skeleton (Lab 2)
+*** 2.1 Cargo workspace,\nshared crate (events, config, logging)
+*** 2.2 Local infra: RabbitMQ,\nPostgres in compose
+*** 2.3 bms-ingest: Redis subscriber,\nmessage parsing
+*** 2.4 bms-ingest: EW zone poller,\nchange detection
+*** 2.5 RabbitMQ topology,\npublishing events
+*** 2.6 bms-state, bms-deconfliction:\nconsume and log events
+*** 2.7 Report
+** 3. State reconstruction (Lab 3)
+*** 3.1 State DB schema, migrations
+*** 3.2 Hive state projection\n(connect, telemetry, disconnect)
+*** 3.3 Inactive hive detection
+*** 3.4 EW zone history
+*** 3.5 HTTP API + Swagger
+*** 3.6 Data model documentation
+*** 3.7 Report
+** 4. Monitoring and reaction (Lab 4)
+*** 4.1 EW zone crossing detection
+*** 4.2 Proximity detection
+*** 4.3 Deconfliction DB schema
+*** 4.4 Saga: planner, CC client,\nconfirmation, timeouts
+*** 4.5 Saga: compensation, plan B
+*** 4.6 bms-ui (egui): map, hives,\nzones, alerts, sagas
+*** 4.7 Report
+** 5. Deployment (Lab 5)
+*** 5.1 Dockerfiles for services
+*** 5.2 Full docker-compose
+*** 5.3 Kubernetes manifests (kind)
+*** 5.4 OpenTelemetry tracing (bonus)
+*** 5.5 Report
+** 6. РГР
+*** 6.1 Multi-cloud deployment
+*** 6.2 Demo video
+*** 6.3 Report
+@endwbs

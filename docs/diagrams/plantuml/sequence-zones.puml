@@ -1,0 +1,58 @@
+@startuml sequence-zones
+title EW zone synchronization: polling, change detection, history
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+autonumber
+
+actor "Operator" as Operator
+participant "Communication\nControl" as CC
+participant "bms-ingest" as Ingest
+queue "RabbitMQ\nbms.events" as Rabbit
+participant "bms-state" as State
+database "state DB" as StateDB
+
+== On bms-ingest startup ==
+Ingest -> CC : GET /api/v1/client/interferences
+CC --> Ingest : [zone A, zone B]
+Ingest -> Rabbit : publish zone.snapshot {A, B}
+Rabbit -> State : deliver zone.snapshot
+State -> StateDB : insert missing zones (active_to = NULL);\nclose zones absent from snapshot (active_to = now)
+note right of Ingest
+  Ingest keeps the last known list only in memory.
+  The snapshot lets consumers reconcile after
+  an ingest restart (deletions missed while down).
+end note
+
+== Operator adds a zone ==
+Operator -> CC : POST /api/v1/client/interference
+note over CC : no event on Redis for zones
+
+loop every 2 s
+  Ingest -> CC : GET /api/v1/client/interferences
+  alt Communication Control unreachable
+    Ingest -> Ingest : skip this round\n(do NOT treat as "all zones deleted")
+  else got the list
+    Ingest -> Ingest : diff with previous list by Id
+  end
+end
+
+Ingest -> Rabbit : publish zone.activated {C, center, radius, CreatedAt}
+Rabbit -> State : deliver zone.activated
+State -> StateDB : INSERT ew_zones (C, active_from = CreatedAt)\nON CONFLICT DO NOTHING
+State -> State : any active hive already inside C?
+alt yes
+  State -> StateDB : INSERT alert (zone_entered)
+  State -> Rabbit : publish alert.zone_entered
+end
+State -> Rabbit : ack
+
+== Operator deletes a zone ==
+Operator -> CC : DELETE /api/v1/client/interference/{id}
+Ingest -> CC : GET /api/v1/client/interferences (next poll)
+Ingest -> Ingest : zone A disappeared
+Ingest -> Rabbit : publish zone.deactivated {A, observed_at}
+Rabbit -> State : deliver zone.deactivated
+State -> StateDB : UPDATE ew_zones SET active_to = observed_at\nWHERE id = A AND active_to IS NULL
+State -> Rabbit : ack
+@enduml
