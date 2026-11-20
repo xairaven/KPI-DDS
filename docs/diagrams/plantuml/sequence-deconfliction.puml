@@ -1,0 +1,56 @@
+@startuml sequence-deconfliction
+title Deconfliction Saga (orchestration): separate two hives that are too close
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+autonumber
+
+queue "RabbitMQ\nbms.events" as Rabbit
+participant "bms-deconfliction" as Decon
+database "deconfliction DB" as DeconDB
+participant "Communication\nControl" as CC
+participant "HiveMind 1" as Hive
+
+Rabbit -> Decon : alert.proximity {hive 1, hive 2, 300 m}
+Decon -> DeconDB : active saga for hive 1 or 2?
+alt already handled
+  Decon -> Rabbit : ack (ignore duplicate)
+end
+
+Decon -> DeconDB : INSERT saga (Started)
+Decon -> Rabbit : publish saga.started
+Decon -> Decon : plan: move hive 1 to a safe point\n(away from hive 2, inside area, outside EW zones)
+Decon -> DeconDB : save plan, original position,\ndeadline for confirmation
+Decon -> Rabbit : ack
+
+== Step: send command ==
+Decon -> CC : PATCH /api/v1/client/hive\n{Hives: ["1"], Destination: safe point}
+CC --> Decon : 202 Accepted (not a proof of delivery)
+CC -> Hive : POST /api/v1/command (Move)
+Decon -> DeconDB : saga = CommandSent
+
+== Step: confirm ==
+alt success
+  Rabbit -> Decon : hive.moved {hive 1}
+  Decon -> DeconDB : saga = Moving
+  Rabbit -> Decon : hive.telemetry (hive 1, hive 2)
+  Decon -> Decon : distance >= threshold
+  Decon -> DeconDB : saga = Completed
+  Decon -> Rabbit : publish saga.completed
+else deadline expired (command lost or hive stuck)
+  Decon -> DeconDB : saga = Compensating
+  Decon -> CC : PATCH /hive {Hives: ["1"], Destination: original position}
+  note right of Decon
+    Compensating action:
+    undo our own "move hive 1".
+  end note
+  Decon -> Decon : plan B: move hive 2 instead\n(same steps)
+  alt plan B succeeds
+    Decon -> DeconDB : saga = Completed
+    Decon -> Rabbit : publish saga.completed
+  else plan B fails
+    Decon -> DeconDB : saga = Failed
+    Decon -> Rabbit : publish saga.failed (operator must act)
+  end
+end
+@enduml

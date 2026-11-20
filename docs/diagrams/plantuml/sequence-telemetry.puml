@@ -1,0 +1,45 @@
+@startuml sequence-telemetry
+title Telemetry processing: state update, EW zone and proximity checks
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+autonumber
+
+participant "HiveMind" as Hive
+participant "Communication\nControl" as CC
+queue "Redis\nHiveChannel" as Redis
+participant "bms-ingest" as Ingest
+queue "RabbitMQ\nbms.events" as Rabbit
+participant "bms-state" as State
+database "state DB" as StateDB
+
+Hive -> CC : POST /api/v1/hive/telemetry
+CC -> Redis : PUBLISH {"Telemetry": {...}, "HiveID": "1"}
+Redis -> Ingest : message
+Ingest -> Ingest : detect type by fields,\nmap to TelemetryEvent
+Ingest -> Rabbit : publish hive.telemetry
+
+Rabbit -> State : deliver hive.telemetry
+State -> StateDB : UPDATE hives\nSET location, speed, height, last_seen
+
+State -> State : location inside an active EW zone?
+alt entered a zone (was outside)
+  State -> StateDB : INSERT alert (zone_entered)
+  State -> Rabbit : publish alert.zone_entered
+else left a zone (was inside)
+  State -> StateDB : close alert (zone_left)
+end
+
+State -> State : distance to other active hives < threshold?
+alt new close pair
+  State -> StateDB : INSERT alert (proximity)
+  State -> Rabbit : publish alert.proximity
+end
+
+State -> Rabbit : ack
+note right of Rabbit
+  Ack only after the DB is updated:
+  if bms-state crashes before that,
+  RabbitMQ redelivers the message.
+end note
+@enduml
