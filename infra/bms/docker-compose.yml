@@ -1,0 +1,50 @@
+# Infrastructure of our BMS: message broker and databases.
+# Credentials here are for local development only.
+name: bms
+
+services:
+  # Message broker between BMS services.
+  # AMQP (for services): localhost:5672
+  # Management UI: http://localhost:15672  (bms / bms)
+  rabbitmq:
+    image: rabbitmq:4.3-management-alpine
+    # RabbitMQ names its data directory after the hostname.
+    # A fixed hostname keeps durable queues across container re-creation.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: bms
+      RABBITMQ_DEFAULT_PASS: bms
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One Postgres server, one database (and user) per service.
+  # localhost:5432
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      # Postgres 18+ images keep data under /var/lib/postgresql/<version>/...
+      - postgres-data:/var/lib/postgresql
+      # Runs once, when the data volume is empty.
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  rabbitmq-data:
+  postgres-data:
