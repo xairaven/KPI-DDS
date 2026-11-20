@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+authors = ["Oleksandr Kovalov <oleksandr.kovalov.work@gmail.com>"]
+publish = false
+
+categories = ["science"]
+
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/xairaven/KPI-DDS"
+
+[profile.release]
+lto = true
+opt-level = 3
+panic = "abort"
+strip = "symbols"
+
+[workspace.dependencies]
+bms-common = { path = "crates/bms-common" }
+
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_doc_comments = "allow"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"
+
+collapsible_if = "warn"
+collapsible_else_if = "warn"
+collapsible_match = "warn"
+collapsible_str_replace = "warn"
+indexing_slicing = "deny"
+
+allow_attributes_without_reason = "warn"
+inconsistent_struct_constructor = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"

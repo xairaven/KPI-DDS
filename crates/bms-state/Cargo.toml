@@ -1,0 +1,21 @@
+[package]
+name = "bms-state"
+description = "Hive state projection, EW zone history, monitoring, HTTP API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+categories.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bms-common.workspace = true
+tokio.workspace = true
+tracing.workspace = true
