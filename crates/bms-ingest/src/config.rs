@@ -11,6 +11,8 @@ pub struct Config {
     pub cc_url: String,
     /// How often EW zones are polled from Communication Control.
     pub zone_poll_interval: Duration,
+    /// RabbitMQ the events are published to.
+    pub rabbitmq_url: String,
 }
 
 impl Config {
@@ -26,6 +28,10 @@ impl Config {
                 "ZONE_POLL_INTERVAL_MS",
                 2000,
             )?),
+            rabbitmq_url: config::optional(
+                "RABBITMQ_URL",
+                "amqp://bms:bms@localhost:5672".to_owned(),
+            )?,
         })
     }
 }
