@@ -5,18 +5,23 @@ use crate::config::Config;
 use bms_common::events::Event;
 use futures_util::StreamExt;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 /// Delay before reconnecting after the connection to Redis was lost.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
 /// Listens to the channel forever, reconnecting when Redis becomes unavailable.
-/// Each recognized message is translated and passed to `on_event`.
-pub async fn run(config: &Config, mut on_event: impl FnMut(Event)) {
+/// Each recognized message is translated and sent to `events`.
+pub async fn run(config: &Config, events: mpsc::Sender<Event>) {
     loop {
-        match listen(config, &mut on_event).await {
+        match listen(config, &events).await {
             Ok(()) => warn!("Redis subscription ended"),
             Err(error) => error!(%error, "Redis subscription failed"),
+        }
+        if events.is_closed() {
+            debug!("Event channel closed, Redis listener stopped");
+            return;
         }
         // Pub/Sub keeps no history: everything published until we resubscribe is lost.
         warn!(delay = ?RECONNECT_DELAY, "Reconnecting to Redis");
@@ -24,9 +29,7 @@ pub async fn run(config: &Config, mut on_event: impl FnMut(Event)) {
     }
 }
 
-async fn listen(
-    config: &Config, on_event: &mut impl FnMut(Event),
-) -> redis::RedisResult<()> {
+async fn listen(config: &Config, events: &mpsc::Sender<Event>) -> redis::RedisResult<()> {
     let client = redis::Client::open(config.redis_url.as_str())?;
     let mut pubsub = client.get_async_pubsub().await?;
     pubsub.subscribe(&config.redis_channel).await?;
@@ -51,7 +54,9 @@ async fn listen(
         };
 
         if let Some(event) = message.into_event() {
-            on_event(event);
+            if events.send(event).await.is_err() {
+                return Ok(());
+            }
         } else {
             debug!(%payload, "Message reports a failed operation, skipped");
         }
