@@ -41,7 +41,7 @@ Rabbit --> State : hive.*, zone.*, saga.*
 State --> Rabbit : alert.*, hive.inactive
 State --> StateDB : SQL
 
-Rabbit --> Decon : alert.proximity, hive.telemetry, zone.*
+Rabbit --> Decon : alert.proximity, hive.telemetry, hive.moved, zone.*
 Decon --> Rabbit : saga.*
 Decon --> DeconDB : SQL
 Decon --> CC : PATCH /hive (move)
