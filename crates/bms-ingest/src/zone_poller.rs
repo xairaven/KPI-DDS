@@ -1,9 +1,9 @@
 //! EW zones are never announced on the Redis bus, so they are polled from
 //! Communication Control's client API and turned into events by comparing lists.
 
+use crate::cc_message::CcLocation;
 use crate::config::Config;
 use bms_common::events::{Event, Zone, ZoneId, ZoneRef, ZoneSnapshot};
-use bms_common::geo::GeoPoint;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -25,21 +25,11 @@ struct CcInterference {
     created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct CcLocation {
-    latitude: f64,
-    longitude: f64,
-}
-
 impl From<CcInterference> for Zone {
     fn from(zone: CcInterference) -> Self {
         Self {
             zone_id: zone.id,
-            center: GeoPoint {
-                latitude: zone.location.latitude,
-                longitude: zone.location.longitude,
-            },
+            center: zone.location.into(),
             radius_km: zone.radius_km,
             created_at: zone.created_at,
         }
@@ -131,6 +121,7 @@ fn diff(previous: &Zones, current: &Zones) -> Vec<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bms_common::geo::GeoPoint;
     use uuid::Uuid;
 
     fn zone(id: u128) -> Zone {

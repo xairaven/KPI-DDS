@@ -59,7 +59,7 @@ pub struct Telemetry {
 struct TelemetryModel {
     #[serde(rename = "HiveID")]
     hive_id: String,
-    location: Location,
+    location: CcLocation,
     speed: f64,
     height: f64,
     state: i32,
@@ -71,7 +71,7 @@ struct TelemetryModel {
 pub struct Move {
     #[serde(rename = "HiveID")]
     hive_id: String,
-    destination: Location,
+    destination: CcLocation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,15 +84,16 @@ pub struct Stop {
     is_immediate_stop: bool,
 }
 
+/// Coordinates as Communication Control sends them, in bus messages and the client API.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct Location {
+pub struct CcLocation {
     latitude: f64,
     longitude: f64,
 }
 
-impl From<Location> for GeoPoint {
-    fn from(location: Location) -> Self {
+impl From<CcLocation> for GeoPoint {
+    fn from(location: CcLocation) -> Self {
         Self {
             latitude: location.latitude,
             longitude: location.longitude,
