@@ -39,8 +39,8 @@ impl Envelope {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Event {
-    HiveConnected(HiveConnected),
-    HiveReconnected(HiveConnected),
+    HiveConnected(HiveRef),
+    HiveReconnected(HiveRef),
     HiveDisconnected(HiveRef),
     HiveTelemetry(HiveTelemetry),
     HiveMoveCommanded(HiveMoveCommanded),
@@ -73,13 +73,6 @@ pub type ZoneId = Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HiveRef {
     pub hive_id: HiveId,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HiveConnected {
-    pub hive_id: HiveId,
-    /// Start position assigned by Communication Control.
-    pub initial_location: GeoPoint,
 }
 
 /// State reported by the hive itself. Not fully reliable: an idle hive may report `Move`.
