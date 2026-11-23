@@ -225,10 +225,13 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dotenvy",
+ "futures-util",
  "lapin",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
+ "tracing",
  "tracing-subscriber",
  "uuid",
 ]
