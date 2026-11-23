@@ -1,5 +1,6 @@
 //! RabbitMQ setup shared by all services.
 
+use crate::config::{self, ConfigError};
 use crate::events::{EXCHANGE, Envelope};
 use futures_util::StreamExt;
 use lapin::message::Delivery;
@@ -19,6 +20,14 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const HANDLER_RETRY_DELAY: Duration = Duration::from_secs(1);
 /// How many unacknowledged messages RabbitMQ may hand to a consumer at once.
 const PREFETCH: u16 = 32;
+
+/// Local development broker from `infra/bms` (its credentials are local-only).
+const DEFAULT_URL: &str = "amqp://bms:bms@localhost:5672";
+
+/// RabbitMQ URL from `RABBITMQ_URL`, defaulting to the local development broker.
+pub fn url_from_env() -> Result<String, ConfigError> {
+    config::optional("RABBITMQ_URL", DEFAULT_URL.to_owned())
+}
 
 /// Connects to RabbitMQ, e.g. `amqp://user:password@localhost:5672`.
 pub async fn connect(url: &str) -> lapin::Result<Connection> {

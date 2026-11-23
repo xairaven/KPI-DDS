@@ -1,3 +1,4 @@
+use bms_common::broker;
 use bms_common::config::{self, ConfigError};
 use std::time::Duration;
 
@@ -28,10 +29,7 @@ impl Config {
                 "ZONE_POLL_INTERVAL_MS",
                 2000,
             )?),
-            rabbitmq_url: config::optional(
-                "RABBITMQ_URL",
-                "amqp://bms:bms@localhost:5672".to_owned(),
-            )?,
+            rabbitmq_url: broker::url_from_env()?,
         })
     }
 }

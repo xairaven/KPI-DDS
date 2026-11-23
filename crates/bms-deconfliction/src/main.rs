@@ -14,10 +14,7 @@ async fn main() -> ExitCode {
     config::load_dotenv();
     bms_common::logging::init();
 
-    let rabbitmq_url: String = match config::optional(
-        "RABBITMQ_URL",
-        "amqp://bms:bms@localhost:5672".to_owned(),
-    ) {
+    let rabbitmq_url = match broker::url_from_env() {
         Ok(url) => url,
         Err(error) => {
             error!(%error, "Invalid configuration");
