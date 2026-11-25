@@ -1,0 +1,72 @@
+@startuml er-state
+title bms-state — data model (database "state")
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+hide circle
+hide methods
+
+entity "hives" as hives {
+  * hive_id : TEXT <<PK>>
+  --
+  * status : hive_status
+    latitude : DOUBLE PRECISION
+    longitude : DOUBLE PRECISION
+    speed : DOUBLE PRECISION
+    height : DOUBLE PRECISION
+    reported_state : reported_state
+    last_telemetry_at : TIMESTAMPTZ
+  * last_seen_at : TIMESTAMPTZ
+  * connected_at : TIMESTAMPTZ
+}
+
+entity "ew_zones" as zones {
+  * zone_id : UUID <<PK>>
+  --
+  * latitude : DOUBLE PRECISION
+  * longitude : DOUBLE PRECISION
+  * radius_km : DOUBLE PRECISION
+  * active_from : TIMESTAMPTZ
+    active_to : TIMESTAMPTZ
+}
+
+entity "processed_events" as processed {
+  * event_id : UUID <<PK>>
+  --
+  * processed_at : TIMESTAMPTZ
+}
+
+enum "hive_status" as hive_status {
+  moving
+  stopped
+  inactive
+  disconnected
+}
+
+enum "reported_state" as reported_state {
+  stop
+  move
+  error
+  unknown
+}
+
+hives::status ..> hive_status
+hives::reported_state ..> reported_state
+
+note bottom of zones
+  Active while active_to IS NULL.
+  Partial index ew_zones_active
+  on (active_to) WHERE active_to IS NULL.
+end note
+
+note bottom of processed
+  event_id of every applied event:
+  a redelivered event is skipped.
+end note
+
+note right of hives
+  * = NOT NULL.
+  Position is NULL until the first
+  telemetry after (re)connecting.
+end note
+@enduml

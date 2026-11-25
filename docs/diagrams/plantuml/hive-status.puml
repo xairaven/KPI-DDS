@@ -1,0 +1,35 @@
+@startuml hive-status
+title Hive status in bms-state (hives.status)
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+
+[*] --> stopped : hive.connected /\nhive.reconnected\n(or first telemetry\nof an unknown hive)
+
+stopped --> moving : hive.telemetry,\nposition changed
+moving --> stopped : hive.telemetry,\nposition unchanged
+moving --> moving : hive.telemetry,\nposition changed
+stopped --> stopped : hive.telemetry,\nposition unchanged
+
+moving --> inactive : no events for\nHIVE_INACTIVE_AFTER_SECS (30 s)
+stopped --> inactive : no events for\nHIVE_INACTIVE_AFTER_SECS (30 s)
+inactive --> moving : hive.telemetry,\nposition changed
+inactive --> stopped : hive.telemetry,\nposition unchanged
+
+moving --> disconnected : hive.disconnected
+stopped --> disconnected : hive.disconnected
+inactive --> disconnected : hive.disconnected
+disconnected --> stopped : hive.connected /\nhive.reconnected
+
+note right of inactive
+  Detected by BMS itself:
+  Communication Control does not
+  report hives that went silent.
+end note
+
+note left of moving
+  Decided from coordinates,
+  not from the state the hive
+  reports about itself.
+end note
+@enduml
