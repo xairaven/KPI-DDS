@@ -5,12 +5,21 @@
 //!    │                                        │                           │
 //!    │                     (telemetry: hives farther apart than separation_m)
 //!    │                                        └──────────> completed <────┘
-//!    └──(no safe point / deadline expired)──> failed
+//!    │                                        │                           │
+//!    │                               (deadline expired)          (deadline expired)
+//!    │                                        └──────> compensating <─────┘
+//!    │                                     (send the moved hive back to its origin)
+//!    │                                                      │
+//!    └──(deadline expired / no safe point)──┬───────────────┘
+//!                                           ├─ attempt 1: plan B ──> started (attempt 2)
+//!                                           └─ attempt 2: ─────────> failed
 //! ```
+//!
+//! Attempt 1 moves one hive; plan B (attempt 2) moves the other one.
 //!
 //! Reactions to events (`on_*`) run inside the transaction of the event. Actions
 //! towards Communication Control and deadlines are handled by the engine (`run`):
-//! the saga is persisted *before* the HTTP command, so after a crash the command
+//! the saga is persisted *before* each HTTP command, so after a crash the command
 //! is simply sent again (sending a hive to the same point twice changes nothing).
 //! Every transition is journaled in `saga_steps` and published as `saga.*`.
 
@@ -180,6 +189,18 @@ async fn tick(
         start_attempt(pool, cc, area, settings, saga).await?;
     }
 
+    let compensating: Vec<Saga> = sqlx::query_as(concat!(
+        "SELECT ",
+        saga_columns!(),
+        " FROM sagas WHERE status = 'compensating' AND NOT compensation_sent
+          ORDER BY saga_id"
+    ))
+    .fetch_all(pool)
+    .await?;
+    for saga in &compensating {
+        compensate(pool, cc, settings, saga).await?;
+    }
+
     let expired: Vec<Saga> = sqlx::query_as(concat!(
         "SELECT ",
         saga_columns!(),
@@ -189,14 +210,127 @@ async fn tick(
     .await?;
     for saga in &expired {
         let mut tx = pool.begin().await?;
-        let note = format!(
-            "Deadline expired in status {:?}; compensation is not implemented yet",
-            saga.status
-        );
-        transition(&mut tx, saga, SagaStatus::Failed, &note).await?;
+        on_deadline(&mut tx, saga, settings).await?;
         tx.commit().await?;
     }
     Ok(())
+}
+
+/// The current step did not finish in time.
+async fn on_deadline(
+    db: &mut PgConnection, saga: &Saga, settings: Settings,
+) -> Result<(), sqlx::Error> {
+    match saga.status {
+        // No command was sent, so there is nothing to undo.
+        SagaStatus::Started => {
+            next_attempt_or_fail(
+                db,
+                saga,
+                settings,
+                "Command not sent before the deadline",
+            )
+            .await
+        },
+        // The hive may have received the command: undo it first.
+        SagaStatus::CommandSent | SagaStatus::Moving => {
+            sqlx::query(
+                "UPDATE sagas SET deadline = now() + make_interval(secs => $2)
+                 WHERE saga_id = $1",
+            )
+            .bind(saga.saga_id)
+            .bind(settings.command_timeout.as_secs_f64())
+            .execute(&mut *db)
+            .await?;
+
+            let hive = saga.moving_hive_id.as_deref().unwrap_or("?");
+            let note = format!(
+                "Deadline expired in status {:?}; sending hive {hive} back",
+                saga.status
+            );
+            transition(db, saga, SagaStatus::Compensating, &note).await
+        },
+        SagaStatus::Compensating => {
+            next_attempt_or_fail(
+                db,
+                saga,
+                settings,
+                "Return command not sent before the deadline",
+            )
+            .await
+        },
+        SagaStatus::Completed | SagaStatus::Failed => Ok(()),
+    }
+}
+
+/// Compensating action: sends the moved hive back to where it was before the command.
+async fn compensate(
+    pool: &PgPool, cc: &CcClient, settings: Settings, saga: &Saga,
+) -> Result<(), sqlx::Error> {
+    let origin: Option<(String, f64, f64)> = sqlx::query_as(
+        "SELECT moving_hive_id, origin_latitude, origin_longitude FROM sagas
+         WHERE saga_id = $1 AND moving_hive_id IS NOT NULL
+           AND origin_latitude IS NOT NULL AND origin_longitude IS NOT NULL",
+    )
+    .bind(saga.saga_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let note = if let Some((hive_id, latitude, longitude)) = origin {
+        let origin = GeoPoint {
+            latitude,
+            longitude,
+        };
+        // Same rule as for the main command: if this succeeds but the service stops
+        // before the update below, the return command is sent again.
+        if let Err(error) = cc.move_hive(&hive_id, origin).await {
+            warn!(saga_id = saga.saga_id, %error, "Return command failed, retrying");
+            return Ok(());
+        }
+        format!("Hive {hive_id} sent back to ({latitude:.5}, {longitude:.5})")
+    } else {
+        "Nothing to send back".to_owned()
+    };
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE sagas SET compensation_sent = true WHERE saga_id = $1")
+        .bind(saga.saga_id)
+        .execute(&mut *tx)
+        .await?;
+    next_attempt_or_fail(&mut tx, saga, settings, &note).await?;
+    tx.commit().await
+}
+
+/// After a failed attempt: plan B (move the other hive), or give up after it.
+async fn next_attempt_or_fail(
+    db: &mut PgConnection, saga: &Saga, settings: Settings, note: &str,
+) -> Result<(), sqlx::Error> {
+    if saga.attempt >= 2 {
+        let note = format!("{note}; both attempts failed, the operator must act");
+        return transition(db, saga, SagaStatus::Failed, &note).await;
+    }
+
+    sqlx::query(
+        "UPDATE sagas SET attempt = 2, status = 'started',
+                          moving_hive_id = NULL,
+                          origin_latitude = NULL, origin_longitude = NULL,
+                          target_latitude = NULL, target_longitude = NULL,
+                          compensation_sent = false,
+                          deadline = now() + make_interval(secs => $2)
+         WHERE saga_id = $1",
+    )
+    .bind(saga.saga_id)
+    .bind(settings.command_timeout.as_secs_f64())
+    .execute(&mut *db)
+    .await?;
+
+    let saga = Saga {
+        attempt: 2,
+        status: SagaStatus::Started,
+        moving_hive_id: None,
+        ..saga.clone()
+    };
+    let note = format!("{note}; plan B: moving hive {}", saga.hive_id);
+    record(db, &saga, &note).await
 }
 
 /// Plans a safe point and commands the moving hive to fly there.
@@ -227,8 +361,9 @@ async fn start_attempt(
     let Some(target) =
         planner::safe_point(moving, fixed, settings.safe_distance_m, area, &zones)
     else {
+        // Nothing was sent yet; maybe the other hive has somewhere to go.
         let mut tx = pool.begin().await?;
-        transition(&mut tx, saga, SagaStatus::Failed, "No safe point found").await?;
+        next_attempt_or_fail(&mut tx, saga, settings, "No safe point found").await?;
         return tx.commit().await;
     };
 

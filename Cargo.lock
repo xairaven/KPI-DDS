@@ -327,6 +327,8 @@ name = "bms-deconfliction"
 version = "0.1.0"
 dependencies = [
  "bms-common",
+ "reqwest",
+ "serde",
  "sqlx",
  "tokio",
  "tracing",
