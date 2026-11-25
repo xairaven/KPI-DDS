@@ -1,0 +1,148 @@
+//! Projection: applies events to the current state stored in the database.
+//!
+//! Every event is applied in one transaction together with remembering its id,
+//! so a redelivered event changes nothing (idempotency).
+
+use bms_common::events::{Envelope, Event, HiveRef, HiveTelemetry, ReportedState};
+use chrono::{DateTime, Utc};
+use sqlx::{PgConnection, PgPool};
+use tracing::{debug, info};
+
+/// Coordinate change (in degrees, about 1 cm) below which a hive counts as not moving.
+const MOVEMENT_EPSILON: f64 = 1e-7;
+
+/// Applies the event unless it was applied before.
+pub async fn apply(pool: &PgPool, envelope: &Envelope) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    let first_time = sqlx::query(
+        "INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING",
+    )
+    .bind(envelope.event_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+
+    if !first_time {
+        // Dropping the transaction rolls it back; nothing was changed anyway.
+        debug!(event_id = %envelope.event_id, "Duplicate event skipped");
+        return Ok(());
+    }
+
+    let at = envelope.occurred_at;
+    match &envelope.event {
+        Event::HiveConnected(hive) | Event::HiveReconnected(hive) => {
+            hive_connected(&mut tx, hive, at).await?;
+        },
+        Event::HiveDisconnected(hive) => hive_disconnected(&mut tx, hive, at).await?,
+        Event::HiveTelemetry(telemetry) => hive_telemetry(&mut tx, telemetry, at).await?,
+        // Commands do not change the hive state: movement is seen in telemetry.
+        // EW zone history is not projected yet.
+        Event::HiveMoveCommanded(_)
+        | Event::HiveStopCommanded(_)
+        | Event::ZoneActivated(_)
+        | Event::ZoneDeactivated(_)
+        | Event::ZoneSnapshot(_) => {},
+    }
+
+    tx.commit().await
+}
+
+/// A (re)connected hive starts over: position unknown until its first telemetry.
+async fn hive_connected(
+    db: &mut PgConnection, hive: &HiveRef, at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO hives (hive_id, status, last_seen_at, connected_at)
+         VALUES ($1, 'stopped', $2, $2)
+         ON CONFLICT (hive_id) DO UPDATE SET
+             status            = 'stopped',
+             latitude          = NULL,
+             longitude         = NULL,
+             speed             = NULL,
+             height            = NULL,
+             reported_state    = NULL,
+             last_telemetry_at = NULL,
+             last_seen_at      = EXCLUDED.last_seen_at,
+             connected_at      = EXCLUDED.connected_at",
+    )
+    .bind(&hive.hive_id)
+    .bind(at)
+    .execute(db)
+    .await?;
+
+    info!(hive_id = %hive.hive_id, "Hive connected");
+    Ok(())
+}
+
+async fn hive_disconnected(
+    db: &mut PgConnection, hive: &HiveRef, at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE hives SET status = 'disconnected', last_seen_at = $2 WHERE hive_id = $1",
+    )
+    .bind(&hive.hive_id)
+    .bind(at)
+    .execute(db)
+    .await?;
+
+    info!(hive_id = %hive.hive_id, "Hive disconnected");
+    Ok(())
+}
+
+/// Stores the latest position. The hive is `moving` if its position changed since
+/// the previous telemetry. Telemetry older than the stored one is ignored.
+async fn hive_telemetry(
+    db: &mut PgConnection, telemetry: &HiveTelemetry, at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let updated = sqlx::query(
+        "INSERT INTO hives (hive_id, status, latitude, longitude, speed, height,
+                            reported_state, last_telemetry_at, last_seen_at, connected_at)
+         VALUES ($1, 'stopped', $2, $3, $4, $5, $6::reported_state, $7, $8, $8)
+         ON CONFLICT (hive_id) DO UPDATE SET
+             status = CASE
+                 WHEN hives.latitude IS NULL THEN 'stopped'::hive_status
+                 WHEN abs(hives.latitude - EXCLUDED.latitude) > $9
+                   OR abs(hives.longitude - EXCLUDED.longitude) > $9
+                     THEN 'moving'::hive_status
+                 ELSE 'stopped'::hive_status
+             END,
+             latitude          = EXCLUDED.latitude,
+             longitude         = EXCLUDED.longitude,
+             speed             = EXCLUDED.speed,
+             height            = EXCLUDED.height,
+             reported_state    = EXCLUDED.reported_state,
+             last_telemetry_at = EXCLUDED.last_telemetry_at,
+             last_seen_at      = EXCLUDED.last_seen_at
+         WHERE hives.last_telemetry_at IS NULL
+            OR hives.last_telemetry_at < EXCLUDED.last_telemetry_at",
+    )
+    .bind(&telemetry.hive_id)
+    .bind(telemetry.location.latitude)
+    .bind(telemetry.location.longitude)
+    .bind(telemetry.speed)
+    .bind(telemetry.height)
+    .bind(reported_state(telemetry.state))
+    .bind(telemetry.reported_at)
+    .bind(at)
+    .bind(MOVEMENT_EPSILON)
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    if updated == 0 {
+        debug!(hive_id = %telemetry.hive_id, "Outdated telemetry ignored");
+    }
+    Ok(())
+}
+
+/// Value of the `reported_state` database enum.
+const fn reported_state(state: ReportedState) -> &'static str {
+    match state {
+        ReportedState::Stop => "stop",
+        ReportedState::Move => "move",
+        ReportedState::Error => "error",
+        ReportedState::Unknown => "unknown",
+    }
+}

@@ -1,9 +1,9 @@
 mod config;
 mod db;
+mod projection;
 
 use crate::config::Config;
 use bms_common::broker::{self, QueueSpec};
-use std::convert::Infallible;
 use std::process::ExitCode;
 use tracing::{error, info};
 
@@ -26,7 +26,7 @@ async fn main() -> ExitCode {
     };
     info!("Service started");
 
-    let _pool = match db::connect(&config.database_url).await {
+    let pool = match db::connect(&config.database_url).await {
         Ok(pool) => pool,
         Err(error) => {
             error!(%error, "Database migration failed");
@@ -35,14 +35,10 @@ async fn main() -> ExitCode {
     };
 
     tokio::select! {
-        () = broker::consume(&config.rabbitmq_url, QUEUE, |envelope| async move {
-            info!(
-                event_id = %envelope.event_id,
-                routing_key = envelope.routing_key(),
-                event = ?envelope.event,
-                "Received"
-            );
-            Ok::<(), Infallible>(())
+        () = broker::consume(&config.rabbitmq_url, QUEUE, |envelope| {
+            // The pool is a cheap handle (Arc inside); each event gets its own copy.
+            let pool = pool.clone();
+            async move { projection::apply(&pool, &envelope).await }
         }) => {},
         _ = tokio::signal::ctrl_c() => info!("Shutting down"),
     }
