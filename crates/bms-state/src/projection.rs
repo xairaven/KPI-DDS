@@ -3,6 +3,7 @@
 //! Every event is applied in one transaction together with remembering its id,
 //! so a redelivered event changes nothing (idempotency).
 
+use crate::monitoring;
 use bms_common::events::{
     Envelope, Event, HiveRef, HiveTelemetry, ReportedState, Zone, ZoneId, ZoneRef,
 };
@@ -36,15 +37,29 @@ pub async fn apply(pool: &PgPool, envelope: &Envelope) -> Result<(), sqlx::Error
     match &envelope.event {
         Event::HiveConnected(hive) | Event::HiveReconnected(hive) => {
             hive_connected(&mut tx, hive, at).await?;
+            // Position became unknown: the hive leaves all zones.
+            monitoring::refresh_hive(&mut tx, &hive.hive_id, at).await?;
         },
         Event::HiveDisconnected(hive) => hive_disconnected(&mut tx, hive, at).await?,
-        Event::HiveTelemetry(telemetry) => hive_telemetry(&mut tx, telemetry, at).await?,
+        Event::HiveTelemetry(telemetry) => {
+            if hive_telemetry(&mut tx, telemetry, at).await? {
+                monitoring::refresh_hive(&mut tx, &telemetry.hive_id, at).await?;
+            }
+        },
         // Commands do not change the hive state: movement is seen in telemetry.
         Event::HiveMoveCommanded(_) | Event::HiveStopCommanded(_) => {},
-        Event::ZoneActivated(zone) => zone_activated(&mut tx, zone).await?,
-        Event::ZoneDeactivated(zone) => zone_deactivated(&mut tx, zone, at).await?,
+        // A zone may appear over (or disappear from) hives that do not move.
+        Event::ZoneActivated(zone) => {
+            zone_activated(&mut tx, zone).await?;
+            monitoring::refresh_all(&mut tx, at).await?;
+        },
+        Event::ZoneDeactivated(zone) => {
+            zone_deactivated(&mut tx, zone, at).await?;
+            monitoring::refresh_all(&mut tx, at).await?;
+        },
         Event::ZoneSnapshot(snapshot) => {
             zone_snapshot(&mut tx, &snapshot.zones, at).await?;
+            monitoring::refresh_all(&mut tx, at).await?;
         },
     }
 
@@ -100,9 +115,10 @@ async fn hive_disconnected(
 
 /// Stores the latest position. The hive is `moving` if its position changed since
 /// the previous telemetry. Telemetry older than the stored one is ignored.
+/// Returns whether the state was updated.
 async fn hive_telemetry(
     db: &mut PgConnection, telemetry: &HiveTelemetry, at: DateTime<Utc>,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query(
         "INSERT INTO hives (hive_id, status, latitude, longitude, speed, height,
                             reported_state, last_telemetry_at, last_seen_at, connected_at)
@@ -141,7 +157,7 @@ async fn hive_telemetry(
     if updated == 0 {
         debug!(hive_id = %telemetry.hive_id, "Outdated telemetry ignored");
     }
-    Ok(())
+    Ok(updated == 1)
 }
 
 /// Value of the `reported_state` database enum.

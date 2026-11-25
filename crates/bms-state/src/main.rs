@@ -2,6 +2,7 @@ mod api;
 mod config;
 mod db;
 mod inactivity;
+mod monitoring;
 mod projection;
 
 use crate::config::Config;

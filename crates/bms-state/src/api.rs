@@ -33,7 +33,8 @@ pub fn router(pool: PgPool) -> axum::Router {
                 .routes(routes!(list_hives))
                 .routes(routes!(get_hive))
                 .routes(routes!(list_active_zones))
-                .routes(routes!(zone_history)),
+                .routes(routes!(zone_history))
+                .routes(routes!(list_open_alerts)),
         )
         .with_state(pool)
         .split_for_parts();
@@ -81,6 +82,36 @@ pub struct Hive {
     last_telemetry_at: Option<DateTime<Utc>>,
     last_seen_at: DateTime<Utc>,
     connected_at: DateTime<Utc>,
+    /// Active EW zones the hive is inside now (BMS-2, BMS-5); empty if none.
+    ew_zone_ids: Vec<Uuid>,
+}
+
+/// Kind of a monitoring alert (database enum `alert_kind`).
+#[derive(Debug, Clone, Copy, Serialize, ToSchema, sqlx::Type)]
+#[sqlx(type_name = "alert_kind", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum AlertKind {
+    ZoneEntered,
+    Proximity,
+}
+
+/// Monitoring alert; open while `resolved_at` is null.
+#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "JSON field is named alert_id, like in the database"
+)]
+pub struct Alert {
+    alert_id: i64,
+    kind: AlertKind,
+    hive_id: String,
+    /// For `zone_entered`: the zone.
+    zone_id: Option<Uuid>,
+    /// For `proximity`: the other hive and the distance to it.
+    other_hive_id: Option<String>,
+    distance_m: Option<f64>,
+    raised_at: DateTime<Utc>,
+    resolved_at: Option<DateTime<Utc>>,
 }
 
 /// EW zone: a circle where radio links are jammed.
@@ -106,7 +137,11 @@ pub struct Zone {
 macro_rules! hive_columns {
     () => {
         "hive_id, status, latitude, longitude, speed, height, \
-         reported_state, last_telemetry_at, last_seen_at, connected_at"
+         reported_state, last_telemetry_at, last_seen_at, connected_at, \
+         ARRAY(SELECT a.zone_id FROM alerts a \
+               WHERE a.hive_id = hives.hive_id AND a.kind = 'zone_entered' \
+                 AND a.resolved_at IS NULL \
+               ORDER BY a.zone_id) AS ew_zone_ids"
     };
 }
 
@@ -196,6 +231,26 @@ async fn zone_history(State(pool): State<PgPool>) -> Result<Json<Vec<Zone>>, Api
     .fetch_all(&pool)
     .await?;
     Ok(Json(zones))
+}
+
+/// Open monitoring alerts, newest first.
+#[utoipa::path(
+    get,
+    path = "/alerts",
+    tag = "Alerts",
+    responses((status = 200, description = "Open alerts", body = Vec<Alert>))
+)]
+async fn list_open_alerts(
+    State(pool): State<PgPool>,
+) -> Result<Json<Vec<Alert>>, ApiError> {
+    let alerts = sqlx::query_as(
+        "SELECT alert_id, kind, hive_id, zone_id, other_hive_id, distance_m,
+                raised_at, resolved_at
+         FROM alerts WHERE resolved_at IS NULL ORDER BY raised_at DESC",
+    )
+    .fetch_all(&pool)
+    .await?;
+    Ok(Json(alerts))
 }
 
 /// Errors returned by handlers, turned into HTTP responses.
