@@ -30,43 +30,67 @@ entity "ew_zones" as zones {
     active_to : TIMESTAMPTZ
 }
 
+entity "alerts" as alerts {
+  * alert_id : BIGSERIAL <<PK>>
+  --
+  * kind : alert_kind
+  * hive_id : TEXT <<FK>>
+    zone_id : UUID <<FK>>
+    other_hive_id : TEXT <<FK>>
+    distance_m : DOUBLE PRECISION
+  * raised_at : TIMESTAMPTZ
+    resolved_at : TIMESTAMPTZ
+}
+
+entity "sagas" as sagas {
+  * saga_id : BIGINT <<PK>>
+  --
+  * alert_id : BIGINT
+  * hive_id : TEXT
+  * other_hive_id : TEXT
+  * status : saga_status
+    moving_hive_id : TEXT
+  * note : TEXT
+  * updated_at : TIMESTAMPTZ
+}
+
 entity "processed_events" as processed {
   * event_id : UUID <<PK>>
   --
   * processed_at : TIMESTAMPTZ
 }
 
-enum "hive_status" as hive_status {
-  moving
-  stopped
-  inactive
-  disconnected
+entity "outbox" as outbox {
+  * id : BIGSERIAL <<PK>>
+  --
+  * routing_key : TEXT
+  * envelope : JSONB
+  * created_at : TIMESTAMPTZ
+    published_at : TIMESTAMPTZ
 }
 
-enum "reported_state" as reported_state {
-  stop
-  move
-  error
-  unknown
-}
+alerts }o--|| hives : hive_id
+alerts }o--o| hives : other_hive_id
+alerts }o--o| zones : zone_id
 
-hives::status ..> hive_status
-hives::reported_state ..> reported_state
+note bottom of alerts
+  zone_entered: zone_id set.
+  proximity: other_hive_id, distance_m set,
+  hive_id < other_hive_id.
+  Open while resolved_at IS NULL.
+end note
+
+note bottom of sagas
+  Read copy, built from saga.* events
+  of bms-deconfliction.
+end note
+
+note bottom of outbox
+  Transactional outbox: alert.* events,
+  published by the relay.
+end note
 
 note bottom of zones
   Active while active_to IS NULL.
-  Partial index ew_zones_active
-  on (active_to) WHERE active_to IS NULL.
-end note
-
-note bottom of processed
-  event_id of every applied event:
-  a redelivered event is skipped.
-end note
-
-note right of hives
-  * = NOT NULL.
-  Position is NULL until the first
-  telemetry after (re)connecting.
 end note
 @enduml

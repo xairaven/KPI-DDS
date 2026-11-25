@@ -1,0 +1,38 @@
+@startuml saga-status
+title Deconfliction saga status (sagas.status)
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+
+[*] --> started : alert.proximity\n(no running saga\nfor these hives)
+
+started --> command_sent : engine: safe point planned,\nmove command accepted\nby Communication Control
+command_sent --> moving : hive.moved\n(command delivered)
+command_sent --> completed : hive.telemetry,\nhives apart
+moving --> completed : hive.telemetry,\nhives apart\n(> SEPARATION_M)
+
+command_sent --> compensating : deadline expired
+moving --> compensating : deadline expired
+
+state "next attempt\nor fail" as next <<choice>>
+compensating --> next : return command accepted,\nor deadline expired
+started --> next : deadline expired,\nor no safe point
+
+next --> started : attempt 1:\nplan B, move the other hive
+next --> failed : attempt 2:\noperator must act
+
+completed --> [*]
+failed --> [*]
+
+note right of compensating
+  Compensating action: the moved
+  hive is sent back to the position
+  it had before the command.
+end note
+
+note left of started
+  Every transition is journaled in
+  saga_steps and published as saga.*
+  through the transactional outbox.
+end note
+@enduml

@@ -1,0 +1,83 @@
+@startuml er-deconfliction
+title bms-deconfliction — data model (database "deconfliction")
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+hide circle
+hide methods
+
+entity "sagas" as sagas {
+  * saga_id : BIGSERIAL <<PK>>
+  --
+  * alert_id : BIGINT <<UNIQUE>>
+  * hive_id : TEXT
+  * other_hive_id : TEXT
+  * status : saga_status
+  * attempt : SMALLINT
+    moving_hive_id : TEXT
+    origin_latitude : DOUBLE PRECISION
+    origin_longitude : DOUBLE PRECISION
+    target_latitude : DOUBLE PRECISION
+    target_longitude : DOUBLE PRECISION
+  * compensation_sent : BOOLEAN
+    deadline : TIMESTAMPTZ
+  * started_at : TIMESTAMPTZ
+    finished_at : TIMESTAMPTZ
+}
+
+entity "saga_steps" as steps {
+  * step_id : BIGSERIAL <<PK>>
+  --
+  * saga_id : BIGINT <<FK>>
+  * status : saga_status
+  * note : TEXT
+  * at : TIMESTAMPTZ
+}
+
+entity "hive_positions" as positions {
+  * hive_id : TEXT <<PK>>
+  --
+  * latitude : DOUBLE PRECISION
+  * longitude : DOUBLE PRECISION
+  * reported_at : TIMESTAMPTZ
+}
+
+entity "ew_zones" as zones {
+  * zone_id : UUID <<PK>>
+  --
+  * latitude : DOUBLE PRECISION
+  * longitude : DOUBLE PRECISION
+  * radius_km : DOUBLE PRECISION
+}
+
+entity "processed_events" as processed {
+  * event_id : UUID <<PK>>
+  --
+  * processed_at : TIMESTAMPTZ
+}
+
+entity "outbox" as outbox {
+  * id : BIGSERIAL <<PK>>
+  --
+  * routing_key : TEXT
+  * envelope : JSONB
+  * created_at : TIMESTAMPTZ
+    published_at : TIMESTAMPTZ
+}
+
+steps }o--|| sagas : saga_id
+
+note right of sagas
+  One saga per proximity alert.
+  attempt 1 moves other_hive_id,
+  attempt 2 (plan B) moves hive_id.
+  origin_*: where compensation sends
+  the moved hive back.
+  finished_at set iff completed / failed.
+end note
+
+note bottom of positions
+  Local copies built from
+  hive.telemetry and zone.* events.
+end note
+@enduml
