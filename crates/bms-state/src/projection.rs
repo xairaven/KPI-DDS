@@ -4,6 +4,7 @@
 //! so a redelivered event changes nothing (idempotency).
 
 use crate::monitoring;
+use bms_common::db;
 use bms_common::events::{
     Envelope, Event, HiveRef, HiveTelemetry, ReportedState, Zone, ZoneId, ZoneRef,
 };
@@ -18,22 +19,10 @@ const MOVEMENT_EPSILON: f64 = 1e-7;
 pub async fn apply(
     pool: &PgPool, settings: monitoring::Settings, envelope: &Envelope,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = pool.begin().await?;
-
-    let first_time = sqlx::query(
-        "INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING",
-    )
-    .bind(envelope.event_id)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected()
-        == 1;
-
-    if !first_time {
-        // Dropping the transaction rolls it back; nothing was changed anyway.
+    let Some(mut tx) = db::begin_event(pool, envelope.event_id).await? else {
         debug!(event_id = %envelope.event_id, "Duplicate event skipped");
         return Ok(());
-    }
+    };
 
     let at = envelope.occurred_at;
     match &envelope.event {

@@ -1,6 +1,5 @@
 mod api;
 mod config;
-mod db;
 mod inactivity;
 mod monitoring;
 mod outbox;
@@ -8,6 +7,7 @@ mod projection;
 
 use crate::config::Config;
 use bms_common::broker::{self, Publisher, QueueSpec};
+use bms_common::db;
 use std::process::ExitCode;
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -31,13 +31,14 @@ async fn main() -> ExitCode {
     };
     info!("Service started");
 
-    let pool = match db::connect(&config.database_url).await {
-        Ok(pool) => pool,
-        Err(error) => {
-            error!(%error, "Database migration failed");
-            return ExitCode::FAILURE;
-        },
-    };
+    let pool =
+        match db::connect(&config.database_url, &sqlx::migrate!("./migrations")).await {
+            Ok(pool) => pool,
+            Err(error) => {
+                error!(%error, "Database migration failed");
+                return ExitCode::FAILURE;
+            },
+        };
 
     let listener = match TcpListener::bind(config.api_addr).await {
         Ok(listener) => listener,
