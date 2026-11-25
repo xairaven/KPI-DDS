@@ -13,6 +13,7 @@ University Labs.
 - Map: http://localhost:8081
 
 - RabbitMQ Admin: http://localhost:15672 (Dev Creds: bms / bms)
+- BMS Swagger: http://localhost:9000/swagger/
 
 ### Docker
 

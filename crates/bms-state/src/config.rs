@@ -1,5 +1,6 @@
 use bms_common::broker;
 use bms_common::config::{self, ConfigError};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -9,6 +10,8 @@ pub struct Config {
     pub database_url: String,
     /// A hive not heard from for this long is considered inactive.
     pub hive_inactive_after: Duration,
+    /// Address the HTTP API listens on.
+    pub api_addr: SocketAddr,
 }
 
 impl Config {
@@ -25,6 +28,11 @@ impl Config {
                 "HIVE_INACTIVE_AFTER_SECS",
                 30,
             )?),
+            // 0.0.0.0: reachable from other machines and containers, not only localhost.
+            api_addr: config::optional(
+                "API_ADDR",
+                SocketAddr::from(([0, 0, 0, 0], 9000)),
+            )?,
         })
     }
 }

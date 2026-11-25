@@ -1,3 +1,4 @@
+mod api;
 mod config;
 mod db;
 mod inactivity;
@@ -6,6 +7,7 @@ mod projection;
 use crate::config::Config;
 use bms_common::broker::{self, QueueSpec};
 use std::process::ExitCode;
+use tokio::net::TcpListener;
 use tracing::{error, info};
 
 const QUEUE: QueueSpec = QueueSpec {
@@ -35,6 +37,15 @@ async fn main() -> ExitCode {
         },
     };
 
+    let listener = match TcpListener::bind(config.api_addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            error!(%error, addr = %config.api_addr, "Cannot listen for HTTP API");
+            return ExitCode::FAILURE;
+        },
+    };
+    info!(addr = %config.api_addr, "HTTP API listening, Swagger UI at /swagger");
+
     tokio::select! {
         () = broker::consume(&config.rabbitmq_url, QUEUE, |envelope| {
             // The pool is a cheap handle (Arc inside); each event gets its own copy.
@@ -42,6 +53,11 @@ async fn main() -> ExitCode {
             async move { projection::apply(&pool, &envelope).await }
         }) => {},
         () = inactivity::run(pool.clone(), config.hive_inactive_after) => {},
+        result = axum::serve(listener, api::router(pool.clone())) => {
+            if let Err(error) = result {
+                error!(%error, "HTTP API stopped");
+            }
+        },
         _ = tokio::signal::ctrl_c() => info!("Shutting down"),
     }
     ExitCode::SUCCESS
