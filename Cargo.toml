@@ -27,6 +27,8 @@ bms-common = { path = "crates/bms-common" }
 axum = "0.8.9"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
+eframe = "0.37.0"
+egui = "0.37.0"
 futures-util = "0.3.34"
 # 4.13 is only days old; stay on the 4.12 line. No TLS: the broker is on a private network.
 lapin = { version = "~4.12.3", default-features = false, features = ["tokio"] }
@@ -51,6 +53,8 @@ utoipa = { version = "6.0.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-axum = "0.3.0"
 # Vendored: the Swagger UI files ship inside the crate instead of being downloaded at build time.
 utoipa-swagger-ui = { version = "10.0.2", features = ["axum", "vendored"] }
+# 0.66 is only days old; stay on 0.65.
+walkers = "~0.65.0"
 uuid = { version = "1.29.3", features = ["serde", "v4"] }
 
 [workspace.lints.rust]
