@@ -3,4 +3,4 @@ allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-indexing-slicing-in-tests = true
 # Product names that are not code in doc comments (".." keeps the defaults).
-doc-valid-idents = ["RabbitMQ", "PostgreSQL", ".."]
+doc-valid-idents = ["OpenAPI", "RabbitMQ", "PostgreSQL", ".."]
