@@ -48,6 +48,10 @@ pub enum Event {
     ZoneActivated(Zone),
     ZoneDeactivated(ZoneRef),
     ZoneSnapshot(ZoneSnapshot),
+    /// Published by `bms-state`: a hive entered an EW zone.
+    AlertZoneEntered(ZoneEnteredAlert),
+    /// Published by `bms-state`: two hives are too close to each other.
+    AlertProximity(ProximityAlert),
 }
 
 impl Event {
@@ -63,6 +67,8 @@ impl Event {
             Self::ZoneActivated(_) => "zone.activated",
             Self::ZoneDeactivated(_) => "zone.deactivated",
             Self::ZoneSnapshot(_) => "zone.snapshot",
+            Self::AlertZoneEntered(_) => "alert.zone_entered",
+            Self::AlertProximity(_) => "alert.proximity",
         }
     }
 }
@@ -120,6 +126,27 @@ pub struct ZoneRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ZoneSnapshot {
     pub zones: Vec<Zone>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneEnteredAlert {
+    /// Alert id in `bms-state`.
+    pub alert_id: i64,
+    pub hive_id: HiveId,
+    pub zone_id: ZoneId,
+}
+
+/// Two hives closer than the proximity threshold, with their positions at detection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProximityAlert {
+    /// Alert id in `bms-state`.
+    pub alert_id: i64,
+    /// The pair is ordered: `hive_id` < `other_hive_id`.
+    pub hive_id: HiveId,
+    pub hive_location: GeoPoint,
+    pub other_hive_id: HiveId,
+    pub other_location: GeoPoint,
+    pub distance_m: f64,
 }
 
 #[cfg(test)]

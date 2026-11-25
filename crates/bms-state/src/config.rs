@@ -1,3 +1,4 @@
+use crate::monitoring;
 use bms_common::broker;
 use bms_common::config::{self, ConfigError};
 use std::net::SocketAddr;
@@ -12,6 +13,7 @@ pub struct Config {
     pub hive_inactive_after: Duration,
     /// Address the HTTP API listens on.
     pub api_addr: SocketAddr,
+    pub monitoring: monitoring::Settings,
 }
 
 impl Config {
@@ -33,6 +35,9 @@ impl Config {
                 "API_ADDR",
                 SocketAddr::from(([0, 0, 0, 0], 9000)),
             )?,
+            monitoring: monitoring::Settings {
+                proximity_threshold_m: config::optional("PROXIMITY_THRESHOLD_M", 500.0)?,
+            },
         })
     }
 }

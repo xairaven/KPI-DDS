@@ -15,7 +15,9 @@ use tracing::{debug, info};
 const MOVEMENT_EPSILON: f64 = 1e-7;
 
 /// Applies the event unless it was applied before.
-pub async fn apply(pool: &PgPool, envelope: &Envelope) -> Result<(), sqlx::Error> {
+pub async fn apply(
+    pool: &PgPool, settings: monitoring::Settings, envelope: &Envelope,
+) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
     let first_time = sqlx::query(
@@ -37,29 +39,38 @@ pub async fn apply(pool: &PgPool, envelope: &Envelope) -> Result<(), sqlx::Error
     match &envelope.event {
         Event::HiveConnected(hive) | Event::HiveReconnected(hive) => {
             hive_connected(&mut tx, hive, at).await?;
-            // Position became unknown: the hive leaves all zones.
-            monitoring::refresh_hive(&mut tx, &hive.hive_id, at).await?;
+            // Position became unknown: the hive leaves all zones and close pairs.
+            monitoring::refresh_hive(&mut tx, settings, &hive.hive_id, at).await?;
         },
-        Event::HiveDisconnected(hive) => hive_disconnected(&mut tx, hive, at).await?,
+        Event::HiveDisconnected(hive) => {
+            hive_disconnected(&mut tx, hive, at).await?;
+            // A disconnected hive takes no part in proximity checks.
+            monitoring::refresh_hive(&mut tx, settings, &hive.hive_id, at).await?;
+        },
         Event::HiveTelemetry(telemetry) => {
             if hive_telemetry(&mut tx, telemetry, at).await? {
-                monitoring::refresh_hive(&mut tx, &telemetry.hive_id, at).await?;
+                monitoring::refresh_hive(&mut tx, settings, &telemetry.hive_id, at)
+                    .await?;
             }
         },
         // Commands do not change the hive state: movement is seen in telemetry.
-        Event::HiveMoveCommanded(_) | Event::HiveStopCommanded(_) => {},
+        // Alerts are published by this service itself and not consumed by it.
+        Event::HiveMoveCommanded(_)
+        | Event::HiveStopCommanded(_)
+        | Event::AlertZoneEntered(_)
+        | Event::AlertProximity(_) => {},
         // A zone may appear over (or disappear from) hives that do not move.
         Event::ZoneActivated(zone) => {
             zone_activated(&mut tx, zone).await?;
-            monitoring::refresh_all(&mut tx, at).await?;
+            monitoring::refresh_all_zones(&mut tx, at).await?;
         },
         Event::ZoneDeactivated(zone) => {
             zone_deactivated(&mut tx, zone, at).await?;
-            monitoring::refresh_all(&mut tx, at).await?;
+            monitoring::refresh_all_zones(&mut tx, at).await?;
         },
         Event::ZoneSnapshot(snapshot) => {
             zone_snapshot(&mut tx, &snapshot.zones, at).await?;
-            monitoring::refresh_all(&mut tx, at).await?;
+            monitoring::refresh_all_zones(&mut tx, at).await?;
         },
     }
 

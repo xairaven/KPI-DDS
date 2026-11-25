@@ -3,10 +3,11 @@ mod config;
 mod db;
 mod inactivity;
 mod monitoring;
+mod outbox;
 mod projection;
 
 use crate::config::Config;
-use bms_common::broker::{self, QueueSpec};
+use bms_common::broker::{self, Publisher, QueueSpec};
 use std::process::ExitCode;
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -47,13 +48,15 @@ async fn main() -> ExitCode {
     };
     info!(addr = %config.api_addr, "HTTP API listening, Swagger UI at /swagger");
 
+    let settings = config.monitoring;
     tokio::select! {
         () = broker::consume(&config.rabbitmq_url, QUEUE, |envelope| {
             // The pool is a cheap handle (Arc inside); each event gets its own copy.
             let pool = pool.clone();
-            async move { projection::apply(&pool, &envelope).await }
+            async move { projection::apply(&pool, settings, &envelope).await }
         }) => {},
-        () = inactivity::run(pool.clone(), config.hive_inactive_after) => {},
+        () = inactivity::run(pool.clone(), config.hive_inactive_after, settings) => {},
+        () = outbox::relay(pool.clone(), Publisher::new(config.rabbitmq_url.clone())) => {},
         result = axum::serve(listener, api::router(pool.clone())) => {
             if let Err(error) = result {
                 error!(%error, "HTTP API stopped");

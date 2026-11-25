@@ -1,11 +1,10 @@
 mod cc_message;
 mod config;
-mod publisher;
 mod redis_listener;
 mod zone_poller;
 
 use crate::config::Config;
-use crate::publisher::Publisher;
+use bms_common::broker::Publisher;
 use bms_common::events::{Envelope, Event};
 use std::process::ExitCode;
 use std::time::Duration;
