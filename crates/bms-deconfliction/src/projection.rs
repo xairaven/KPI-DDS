@@ -1,32 +1,36 @@
-//! Local copies of hive positions and active EW zones, built from events.
-//! The saga reads them to plan safe points and to check that hives moved apart.
+//! Applies events: keeps local copies of hive positions and active EW zones
+//! (the saga reads them to plan safe points and to check that hives moved apart)
+//! and lets the saga react to alerts and hive events.
 
+use crate::saga;
 use bms_common::db;
 use bms_common::events::{Envelope, Event, HiveTelemetry, Zone, ZoneId, ZoneRef};
 use sqlx::{PgConnection, PgPool};
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Applies the event unless it was applied before.
-pub async fn apply(pool: &PgPool, envelope: &Envelope) -> Result<(), sqlx::Error> {
+pub async fn apply(
+    pool: &PgPool, settings: saga::Settings, envelope: &Envelope,
+) -> Result<(), sqlx::Error> {
     let Some(mut tx) = db::begin_event(pool, envelope.event_id).await? else {
         debug!(event_id = %envelope.event_id, "Duplicate event skipped");
         return Ok(());
     };
 
     match &envelope.event {
-        Event::HiveTelemetry(telemetry) => hive_position(&mut tx, telemetry).await?,
+        Event::HiveTelemetry(telemetry) => {
+            hive_position(&mut tx, telemetry).await?;
+            saga::on_telemetry(&mut tx, &telemetry.hive_id, settings).await?;
+        },
+        Event::HiveMoveCommanded(command) => {
+            saga::on_hive_moved(&mut tx, &command.hive_id, settings).await?;
+        },
+        Event::AlertProximity(alert) => {
+            saga::on_proximity(&mut tx, alert, settings).await?;
+        },
         Event::ZoneActivated(zone) => zone_activated(&mut tx, zone).await?,
         Event::ZoneDeactivated(zone) => zone_deactivated(&mut tx, zone).await?,
         Event::ZoneSnapshot(snapshot) => zone_snapshot(&mut tx, &snapshot.zones).await?,
-        Event::AlertProximity(alert) => {
-            info!(
-                alert_id = alert.alert_id,
-                hive_id = %alert.hive_id,
-                other_hive_id = %alert.other_hive_id,
-                distance_m = alert.distance_m.round(),
-                "Hives too close, saga not implemented yet"
-            );
-        },
         // Not bound to this queue, or not needed by the saga.
         _ => {},
     }
