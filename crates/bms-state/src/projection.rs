@@ -3,7 +3,9 @@
 //! Every event is applied in one transaction together with remembering its id,
 //! so a redelivered event changes nothing (idempotency).
 
-use bms_common::events::{Envelope, Event, HiveRef, HiveTelemetry, ReportedState};
+use bms_common::events::{
+    Envelope, Event, HiveRef, HiveTelemetry, ReportedState, Zone, ZoneId, ZoneRef,
+};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, PgPool};
 use tracing::{debug, info};
@@ -38,12 +40,12 @@ pub async fn apply(pool: &PgPool, envelope: &Envelope) -> Result<(), sqlx::Error
         Event::HiveDisconnected(hive) => hive_disconnected(&mut tx, hive, at).await?,
         Event::HiveTelemetry(telemetry) => hive_telemetry(&mut tx, telemetry, at).await?,
         // Commands do not change the hive state: movement is seen in telemetry.
-        // EW zone history is not projected yet.
-        Event::HiveMoveCommanded(_)
-        | Event::HiveStopCommanded(_)
-        | Event::ZoneActivated(_)
-        | Event::ZoneDeactivated(_)
-        | Event::ZoneSnapshot(_) => {},
+        Event::HiveMoveCommanded(_) | Event::HiveStopCommanded(_) => {},
+        Event::ZoneActivated(zone) => zone_activated(&mut tx, zone).await?,
+        Event::ZoneDeactivated(zone) => zone_deactivated(&mut tx, zone, at).await?,
+        Event::ZoneSnapshot(snapshot) => {
+            zone_snapshot(&mut tx, &snapshot.zones, at).await?;
+        },
     }
 
     tx.commit().await
@@ -150,4 +152,87 @@ const fn reported_state(state: ReportedState) -> &'static str {
         ReportedState::Error => "error",
         ReportedState::Unknown => "unknown",
     }
+}
+
+/// Records a new zone in the history. Already known zones are left unchanged.
+async fn zone_activated(db: &mut PgConnection, zone: &Zone) -> Result<(), sqlx::Error> {
+    let inserted = insert_zone(db, zone).await?;
+    if inserted {
+        info!(zone_id = %zone.zone_id, radius_km = zone.radius_km, "EW zone activated");
+    }
+    Ok(())
+}
+
+/// Closes the zone's activity period.
+async fn zone_deactivated(
+    db: &mut PgConnection, zone: &ZoneRef, at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let updated = sqlx::query(
+        // GREATEST: the end can't precede the start even if clocks of
+        // Communication Control and BMS differ slightly.
+        "UPDATE ew_zones SET active_to = GREATEST(active_from, $2)
+         WHERE zone_id = $1 AND active_to IS NULL",
+    )
+    .bind(zone.zone_id)
+    .bind(at)
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    if updated == 0 {
+        debug!(zone_id = %zone.zone_id, "Zone unknown or already inactive");
+    } else {
+        info!(zone_id = %zone.zone_id, "EW zone deactivated");
+    }
+    Ok(())
+}
+
+/// Reconciles the history with the full list of currently active zones:
+/// adds missing zones and closes active ones that are no longer in the list
+/// (deleted while `bms-ingest` was not running).
+async fn zone_snapshot(
+    db: &mut PgConnection, zones: &[Zone], at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let mut added = 0;
+    for zone in zones {
+        if insert_zone(&mut *db, zone).await? {
+            added += 1;
+        }
+    }
+
+    let active_ids: Vec<ZoneId> = zones.iter().map(|zone| zone.zone_id).collect();
+    let closed = sqlx::query(
+        "UPDATE ew_zones SET active_to = GREATEST(active_from, $2)
+         WHERE active_to IS NULL AND NOT (zone_id = ANY($1))",
+    )
+    .bind(&active_ids)
+    .bind(at)
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    info!(
+        active = zones.len(),
+        added, closed, "EW zones reconciled with snapshot"
+    );
+    Ok(())
+}
+
+/// Returns whether the zone was new.
+async fn insert_zone(db: &mut PgConnection, zone: &Zone) -> Result<bool, sqlx::Error> {
+    let inserted = sqlx::query(
+        "INSERT INTO ew_zones (zone_id, latitude, longitude, radius_km, active_from)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (zone_id) DO NOTHING",
+    )
+    .bind(zone.zone_id)
+    .bind(zone.center.latitude)
+    .bind(zone.center.longitude)
+    .bind(zone.radius_km)
+    .bind(zone.created_at)
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    Ok(inserted == 1)
 }
