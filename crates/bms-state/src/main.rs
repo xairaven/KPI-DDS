@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod inactivity;
 mod projection;
 
 use crate::config::Config;
@@ -40,6 +41,7 @@ async fn main() -> ExitCode {
             let pool = pool.clone();
             async move { projection::apply(&pool, &envelope).await }
         }) => {},
+        () = inactivity::run(pool.clone(), config.hive_inactive_after) => {},
         _ = tokio::signal::ctrl_c() => info!("Shutting down"),
     }
     ExitCode::SUCCESS

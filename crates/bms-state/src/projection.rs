@@ -79,15 +79,20 @@ async fn hive_connected(
 async fn hive_disconnected(
     db: &mut PgConnection, hive: &HiveRef, at: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    let updated = sqlx::query(
         "UPDATE hives SET status = 'disconnected', last_seen_at = $2 WHERE hive_id = $1",
     )
     .bind(&hive.hive_id)
     .bind(at)
     .execute(db)
-    .await?;
+    .await?
+    .rows_affected();
 
-    info!(hive_id = %hive.hive_id, "Hive disconnected");
+    if updated == 0 {
+        debug!(hive_id = %hive.hive_id, "Unknown hive disconnected, nothing to update");
+    } else {
+        info!(hive_id = %hive.hive_id, "Hive disconnected");
+    }
     Ok(())
 }
 
