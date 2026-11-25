@@ -16,8 +16,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+axum.workspace = true
 bms-common.workspace = true
 chrono.workspace = true
+serde.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+utoipa-swagger-ui.workspace = true
+uuid.workspace = true
