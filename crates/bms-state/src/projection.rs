@@ -6,7 +6,8 @@
 use crate::monitoring;
 use bms_common::db;
 use bms_common::events::{
-    Envelope, Event, HiveRef, HiveTelemetry, ReportedState, Zone, ZoneId, ZoneRef,
+    Envelope, Event, HiveRef, HiveTelemetry, ReportedState, SagaUpdate, Zone, ZoneId,
+    ZoneRef,
 };
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, PgPool};
@@ -42,14 +43,13 @@ pub async fn apply(
                     .await?;
             }
         },
+        Event::SagaUpdated(update) => saga_updated(&mut tx, update, at).await?,
         // Commands do not change the hive state: movement is seen in telemetry.
         // Alerts are published by this service itself and not consumed by it.
-        // Saga updates are not stored yet.
         Event::HiveMoveCommanded(_)
         | Event::HiveStopCommanded(_)
         | Event::AlertZoneEntered(_)
-        | Event::AlertProximity(_)
-        | Event::SagaUpdated(_) => {},
+        | Event::AlertProximity(_) => {},
         // A zone may appear over (or disappear from) hives that do not move.
         Event::ZoneActivated(zone) => {
             zone_activated(&mut tx, zone).await?;
@@ -253,4 +253,34 @@ async fn insert_zone(db: &mut PgConnection, zone: &Zone) -> Result<bool, sqlx::E
     .rows_affected();
 
     Ok(inserted == 1)
+}
+
+/// Keeps the latest known status of each deconfliction saga.
+async fn saga_updated(
+    db: &mut PgConnection, update: &SagaUpdate, at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO sagas (saga_id, alert_id, hive_id, other_hive_id, status,
+                            moving_hive_id, note, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (saga_id) DO UPDATE SET
+             status         = EXCLUDED.status,
+             moving_hive_id = EXCLUDED.moving_hive_id,
+             note           = EXCLUDED.note,
+             updated_at     = EXCLUDED.updated_at
+         WHERE sagas.updated_at <= EXCLUDED.updated_at",
+    )
+    .bind(update.saga_id)
+    .bind(update.alert_id)
+    .bind(&update.hive_id)
+    .bind(&update.other_hive_id)
+    .bind(update.status)
+    .bind(&update.moving_hive_id)
+    .bind(&update.note)
+    .bind(at)
+    .execute(db)
+    .await?;
+
+    info!(saga_id = update.saga_id, status = ?update.status, "Saga updated");
+    Ok(())
 }

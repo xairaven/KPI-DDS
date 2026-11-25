@@ -7,6 +7,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use bms_common::events::SagaStatus;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -34,7 +35,8 @@ pub fn router(pool: PgPool) -> axum::Router {
                 .routes(routes!(get_hive))
                 .routes(routes!(list_active_zones))
                 .routes(routes!(zone_history))
-                .routes(routes!(list_open_alerts)),
+                .routes(routes!(list_open_alerts))
+                .routes(routes!(list_sagas)),
         )
         .with_state(pool)
         .split_for_parts();
@@ -231,6 +233,46 @@ async fn zone_history(State(pool): State<PgPool>) -> Result<Json<Vec<Zone>>, Api
     .fetch_all(&pool)
     .await?;
     Ok(Json(zones))
+}
+
+/// Deconfliction saga, as last reported by `bms-deconfliction`.
+#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "JSON field is named saga_id, like in events and the database"
+)]
+pub struct Saga {
+    saga_id: i64,
+    /// The proximity alert that started the saga.
+    alert_id: i64,
+    hive_id: String,
+    other_hive_id: String,
+    /// started, `command_sent`, moving, compensating, completed or failed.
+    #[schema(value_type = String)]
+    status: SagaStatus,
+    /// Hive commanded in the current attempt.
+    moving_hive_id: Option<String>,
+    /// Reason of the latest change.
+    note: String,
+    updated_at: DateTime<Utc>,
+}
+
+/// Most recent deconfliction sagas, newest first.
+#[utoipa::path(
+    get,
+    path = "/sagas",
+    tag = "Sagas",
+    responses((status = 200, description = "Latest 50 sagas", body = Vec<Saga>))
+)]
+async fn list_sagas(State(pool): State<PgPool>) -> Result<Json<Vec<Saga>>, ApiError> {
+    let sagas = sqlx::query_as(
+        "SELECT saga_id, alert_id, hive_id, other_hive_id, status, moving_hive_id,
+                note, updated_at
+         FROM sagas ORDER BY saga_id DESC LIMIT 50",
+    )
+    .fetch_all(&pool)
+    .await?;
+    Ok(Json(sagas))
 }
 
 /// Open monitoring alerts, newest first.
