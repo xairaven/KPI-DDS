@@ -7,8 +7,8 @@
 //! unpublished rows afterwards. A crash between publishing and marking a row
 //! publishes it again with the same `event_id`, which consumers recognize.
 
-use bms_common::broker::{PublishError, Publisher};
-use bms_common::events::{Envelope, Event};
+use crate::broker::{PublishError, Publisher};
+use crate::events::{Envelope, Event};
 use sqlx::types::Json;
 use sqlx::{PgConnection, PgPool};
 use std::time::Duration;

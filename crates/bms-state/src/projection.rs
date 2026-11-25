@@ -44,10 +44,12 @@ pub async fn apply(
         },
         // Commands do not change the hive state: movement is seen in telemetry.
         // Alerts are published by this service itself and not consumed by it.
+        // Saga updates are not stored yet.
         Event::HiveMoveCommanded(_)
         | Event::HiveStopCommanded(_)
         | Event::AlertZoneEntered(_)
-        | Event::AlertProximity(_) => {},
+        | Event::AlertProximity(_)
+        | Event::SagaUpdated(_) => {},
         // A zone may appear over (or disappear from) hives that do not move.
         Event::ZoneActivated(zone) => {
             zone_activated(&mut tx, zone).await?;

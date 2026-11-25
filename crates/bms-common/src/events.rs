@@ -52,6 +52,8 @@ pub enum Event {
     AlertZoneEntered(ZoneEnteredAlert),
     /// Published by `bms-state`: two hives are too close to each other.
     AlertProximity(ProximityAlert),
+    /// Published by `bms-deconfliction`: a saga changed its status.
+    SagaUpdated(SagaUpdate),
 }
 
 impl Event {
@@ -69,6 +71,14 @@ impl Event {
             Self::ZoneSnapshot(_) => "zone.snapshot",
             Self::AlertZoneEntered(_) => "alert.zone_entered",
             Self::AlertProximity(_) => "alert.proximity",
+            Self::SagaUpdated(update) => match update.status {
+                SagaStatus::Started => "saga.started",
+                SagaStatus::CommandSent => "saga.command_sent",
+                SagaStatus::Moving => "saga.moving",
+                SagaStatus::Compensating => "saga.compensating",
+                SagaStatus::Completed => "saga.completed",
+                SagaStatus::Failed => "saga.failed",
+            },
         }
     }
 }
@@ -147,6 +157,33 @@ pub struct ProximityAlert {
     pub other_hive_id: HiveId,
     pub other_location: GeoPoint,
     pub distance_m: f64,
+}
+
+/// Stage of the deconfliction saga (database enum `saga_status` in `bms-deconfliction`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "saga_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum SagaStatus {
+    Started,
+    CommandSent,
+    Moving,
+    Compensating,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SagaUpdate {
+    pub saga_id: i64,
+    /// Proximity alert of `bms-state` that started the saga.
+    pub alert_id: i64,
+    pub hive_id: HiveId,
+    pub other_hive_id: HiveId,
+    pub status: SagaStatus,
+    /// Hive commanded in the current attempt, if any.
+    pub moving_hive_id: Option<HiveId>,
+    /// Human-readable reason of the change.
+    pub note: String,
 }
 
 #[cfg(test)]

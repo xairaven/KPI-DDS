@@ -2,12 +2,11 @@ mod api;
 mod config;
 mod inactivity;
 mod monitoring;
-mod outbox;
 mod projection;
 
 use crate::config::Config;
 use bms_common::broker::{self, Publisher, QueueSpec};
-use bms_common::db;
+use bms_common::{db, outbox};
 use std::process::ExitCode;
 use tokio::net::TcpListener;
 use tracing::{error, info};

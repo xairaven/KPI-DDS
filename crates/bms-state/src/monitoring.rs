@@ -11,9 +11,9 @@
 //! Checks run inside the transaction of the event that triggered them; new alerts
 //! are announced through the transactional outbox.
 
-use crate::outbox;
 use bms_common::events::{Event, ProximityAlert, ZoneEnteredAlert};
 use bms_common::geo::GeoPoint;
+use bms_common::outbox;
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, BTreeSet};

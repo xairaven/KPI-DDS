@@ -30,6 +30,41 @@ impl GeoPoint {
     pub fn is_within(self, center: Self, radius_km: f64) -> bool {
         self.distance_km(center) <= radius_km
     }
+
+    /// Initial bearing towards another point, degrees clockwise from north (0..360).
+    pub fn bearing_to(self, other: Self) -> f64 {
+        let (lat1, lat2) = (self.latitude.to_radians(), other.latitude.to_radians());
+        let d_lon = (other.longitude - self.longitude).to_radians();
+
+        let y = d_lon.sin() * lat2.cos();
+        let x = lat1
+            .cos()
+            .mul_add(lat2.sin(), -(lat1.sin() * lat2.cos() * d_lon.cos()));
+        y.atan2(x).to_degrees().rem_euclid(360.0)
+    }
+
+    /// The point `distance_m` away along the great circle with the given bearing.
+    #[must_use]
+    pub fn offset(self, bearing_deg: f64, distance_m: f64) -> Self {
+        let lat1 = self.latitude.to_radians();
+        let lon1 = self.longitude.to_radians();
+        let bearing = bearing_deg.to_radians();
+        // Angular distance.
+        let delta = distance_m / 1000.0 / EARTH_RADIUS_KM;
+
+        let lat2 = lat1
+            .sin()
+            .mul_add(delta.cos(), lat1.cos() * delta.sin() * bearing.cos())
+            .asin();
+        let lon2 = lon1
+            + (bearing.sin() * delta.sin() * lat1.cos())
+                .atan2(lat1.sin().mul_add(-lat2.sin(), delta.cos()));
+
+        Self {
+            latitude: lat2.to_degrees(),
+            longitude: lon2.to_degrees(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -65,6 +100,24 @@ mod tests {
     fn distance_is_symmetric() {
         let (a, b) = (point(48.7195, 38.0927), point(48.68, 38.04));
         assert!((a.distance_km(b) - b.distance_km(a)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bearing_to_cardinal_directions() {
+        let p = point(48.7, 38.07);
+        assert!(p.bearing_to(point(48.8, 38.07)).abs() < 1e-6); // north
+        assert!((p.bearing_to(point(48.6, 38.07)) - 180.0).abs() < 1e-6); // south
+        assert!((p.bearing_to(point(48.7, 38.17)) - 90.0).abs() < 0.1); // east
+    }
+
+    #[test]
+    fn offset_lands_at_the_requested_distance_and_bearing() {
+        let start = point(48.7195, 38.0927);
+        for bearing in [0.0, 45.0, 135.0, 270.0] {
+            let end = start.offset(bearing, 1000.0);
+            assert!((start.distance_km(end) - 1.0).abs() < 1e-5);
+            assert!((start.bearing_to(end) - bearing).abs() < 0.01);
+        }
     }
 
     #[test]
