@@ -1,0 +1,11 @@
+# Only Cargo files and crates/ go into the build context.
+target
+.git
+.idea
+.claude
+docs
+infra
+# The image already has the right Rust; with this file rustup would try
+# to install clippy and rustfmt inside the build.
+rust-toolchain.toml
+**/.env

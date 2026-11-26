@@ -45,6 +45,62 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------- BMS services ----------
+  # Profile "app": a plain "docker compose up" starts only the infrastructure
+  # above (for running services with cargo); "--profile app" adds the services.
+  # They join the lecturer's network to reach Redis and Communication Control,
+  # so start infra/hiveemulator first.
+
+  bms-ingest:
+    profiles: [app]
+    build: { context: ../.., target: bms-ingest }
+    image: bms-ingest:local
+    # Exactly one instance: two would publish every bus message twice.
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      CC_URL: http://communication-control:8080
+      RABBITMQ_URL: amqp://bms:bms@rabbitmq:5672
+    networks: [default, hiveemulator]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+
+  bms-state:
+    profiles: [app]
+    build: { context: ../.., target: bms-state }
+    image: bms-state:local
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://bms_state:bms_state@postgres:5432/state
+      RABBITMQ_URL: amqp://bms:bms@rabbitmq:5672
+    # REST API + Swagger: http://localhost:9000/swagger
+    ports:
+      - "9000:9000"
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
+  bms-deconfliction:
+    profiles: [app]
+    build: { context: ../.., target: bms-deconfliction }
+    image: bms-deconfliction:local
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://bms_deconfliction:bms_deconfliction@postgres:5432/deconfliction
+      CC_URL: http://communication-control:8080
+      RABBITMQ_URL: amqp://bms:bms@rabbitmq:5672
+    networks: [default, hiveemulator]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
+networks:
+  default:
+  # Created by infra/hiveemulator (project "hiveemulator").
+  hiveemulator:
+    name: hiveemulator_default
+    external: true
+
 volumes:
   rabbitmq-data:
   postgres-data:
