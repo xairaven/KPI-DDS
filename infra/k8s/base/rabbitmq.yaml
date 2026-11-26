@@ -24,6 +24,11 @@ spec:
         runAsUser: 100
         runAsGroup: 101
         fsGroup: 101
+        # Change ownership only of a new volume (root not owned by the group yet).
+        # The default (Always) adds group permissions to every file on each start,
+        # and both servers refuse files readable by others than the owner
+        # (the Erlang cookie, the PostgreSQL data directory).
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: rabbitmq
           image: rabbitmq:4.3-management-alpine

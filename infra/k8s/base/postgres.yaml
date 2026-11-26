@@ -18,12 +18,17 @@ spec:
     spec:
       # Runs directly as the image's postgres user (uid/gid 70 in the alpine
       # image). Started as root, the entrypoint switches users with gosu, which
-      # hung on the Azure VM's kernel; this way it is not needed at all.
+      # hung on the first Azure VM; this way it is not needed at all.
       # fsGroup hands the new volume (owned by root) to the postgres group.
       securityContext:
         runAsUser: 70
         runAsGroup: 70
         fsGroup: 70
+        # Change ownership only of a new volume (root not owned by the group yet).
+        # The default (Always) adds group permissions to every file on each start,
+        # and both servers refuse files readable by others than the owner
+        # (the Erlang cookie, the PostgreSQL data directory).
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: postgres
           image: postgres:18-alpine
