@@ -1,0 +1,79 @@
+#cloud-config
+# The lecturer's system on AWS, as infra/hiveemulator/docker-compose.yml, but:
+#   - Redis requires a password: it is reachable from Azure over the internet;
+#   - HiveMind comes from ghcr.io (built by GitHub Actions), not built here;
+#   - the web map calls Communication Control by the public address.
+
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+
+write_files:
+  - path: /opt/hiveemulator/map-config.json
+    content: |
+      {
+          "API": "http://${public_ip}:8080/api/v1/client"
+      }
+
+  - path: /opt/hiveemulator/docker-compose.yml
+    content: |
+      name: hiveemulator
+
+      x-hivemind: &hivemind
+        image: ghcr.io/${image_owner}/hivemind:latest
+        restart: unless-stopped
+        depends_on:
+          - communication-control
+
+      services:
+        redis:
+          image: redis:7
+          command: ["redis-server", "--requirepass", "${redis_password}"]
+          restart: unless-stopped
+          ports:
+            - "6379:6379"
+
+        communication-control:
+          image: registry.gitlab.com/kzotkin/hiveemulator/communication-control
+          restart: unless-stopped
+          environment:
+            # StackExchange.Redis connection string with the password.
+            Redis__ConnectionString: "redis:6379,password=${redis_password}"
+          ports:
+            - "8080:8080"
+          depends_on:
+            - redis
+
+        map-client:
+          image: registry.gitlab.com/kzotkin/hiveemulator/map-client
+          restart: unless-stopped
+          ports:
+            - "8081:80"
+          volumes:
+            - ./map-config.json:/usr/share/nginx/html/config.json:ro
+          depends_on:
+            - communication-control
+
+        hive-1:
+          <<: *hivemind
+          environment:
+            CommunicationConfiguration__CommunicationControlIP: communication-control
+            CommunicationConfiguration__HiveIP: hive-1
+            CommunicationConfiguration__HiveID: "1"
+            CommunicationConfiguration__InitialLocation__Latitude: 48.7195
+            CommunicationConfiguration__InitialLocation__Longitude: 38.0927
+
+        hive-2:
+          <<: *hivemind
+          environment:
+            CommunicationConfiguration__CommunicationControlIP: communication-control
+            CommunicationConfiguration__HiveIP: hive-2
+            CommunicationConfiguration__HiveID: "2"
+            CommunicationConfiguration__InitialLocation__Latitude: 48.6800
+            CommunicationConfiguration__InitialLocation__Longitude: 38.0400
+
+runcmd:
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  - cd /opt/hiveemulator && docker compose up -d

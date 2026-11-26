@@ -1,0 +1,11 @@
+# State: the real list of created resources, including generated passwords.
+*.tfstate
+*.tfstate.*
+# Downloaded providers.
+.terraform/
+# Values specific to this machine (subscription id).
+*.tfvars
+# kubeconfig fetched from the Azure server.
+kubeconfig
+# Saved plans (tofu plan -out).
+tfplan

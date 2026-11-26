@@ -1,0 +1,15 @@
+#cloud-config
+# k3s: a complete Kubernetes in one small binary, with Traefik as the ingress
+# controller (entry point for HTTP/HTTPS) and local-path storage built in.
+# BMS itself is deployed afterwards with kubectl from infra/k8s/overlays/azure.
+
+package_update: true
+
+runcmd:
+  # --tls-san: the API server certificate must also be valid for the public
+  # name and address, so that kubectl can connect from outside.
+  - >-
+    curl -sfL https://get.k3s.io |
+    INSTALL_K3S_CHANNEL=stable
+    INSTALL_K3S_EXEC="server --tls-san ${fqdn} --tls-san ${public_ip}"
+    sh -
