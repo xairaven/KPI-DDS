@@ -1,0 +1,116 @@
+# Builds the container images and publishes them to GitHub Container Registry,
+# from where the cloud servers pull them:
+#
+#   ghcr.io/xairaven/bms-ingest, bms-state, bms-deconfliction   (our services)
+#   ghcr.io/xairaven/hivemind                                    (lecturer's HiveMind,
+#                                                                no official image)
+#
+# Tags: "latest" and "sha-<commit>", so a deployment can pin an exact build.
+name: Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile"
+      - "infra/hiveemulator/hivemind.Dockerfile"
+      - "infra/hiveemulator/upstream"
+      - ".github/workflows/images.yml"
+  # Manual run from the Actions tab.
+  workflow_dispatch:
+
+# Only the newest run per branch: a newer push cancels an older build.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Publish to ghcr.io with the workflow's own token, no personal token needed.
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  bms:
+    name: BMS services
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The three images share the builder stage of the Dockerfile: built once
+      # for the first image, reused from the builder's cache for the others.
+      # The GitHub Actions cache keeps layers between workflow runs.
+      - name: bms-ingest
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: bms-ingest
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/bms-ingest:latest
+            ${{ env.REGISTRY }}/bms-ingest:sha-${{ github.sha }}
+          cache-from: type=gha,scope=bms
+          cache-to: type=gha,scope=bms,mode=max
+
+      - name: bms-state
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: bms-state
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/bms-state:latest
+            ${{ env.REGISTRY }}/bms-state:sha-${{ github.sha }}
+          cache-from: type=gha,scope=bms
+
+      - name: bms-deconfliction
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: bms-deconfliction
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/bms-deconfliction:latest
+            ${{ env.REGISTRY }}/bms-deconfliction:sha-${{ github.sha }}
+          cache-from: type=gha,scope=bms
+
+  hivemind:
+    name: HiveMind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The lecturer's source code is a git submodule.
+          submodules: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: infra/hiveemulator/upstream/src/CommunicationControl
+          file: infra/hiveemulator/hivemind.Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/hivemind:latest
+            ${{ env.REGISTRY }}/hivemind:sha-${{ github.sha }}
+          cache-from: type=gha,scope=hivemind
+          cache-to: type=gha,scope=hivemind,mode=max
