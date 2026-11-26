@@ -84,6 +84,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://bms_state:bms_state@postgres:5432/state
+      # API bearer token (BMS-7), local development only.
+      BMS_API_TOKENS: local-dev-token
       RABBITMQ_URL: amqp://bms:bms@rabbitmq:5672
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     # REST API + Swagger: http://localhost:9000/swagger

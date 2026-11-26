@@ -37,6 +37,12 @@ resource "random_password" "deconfliction_db" {
   special = false
 }
 
+# Bearer token of the BMS API (BMS-7), for bms-ui and the Swagger UI.
+resource "random_password" "api_token" {
+  length  = 40
+  special = false
+}
+
 resource "random_password" "rabbitmq" {
   length  = 32
   special = false

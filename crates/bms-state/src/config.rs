@@ -1,3 +1,4 @@
+use crate::auth::ApiTokens;
 use crate::monitoring;
 use bms_common::broker;
 use bms_common::config::{self, ConfigError};
@@ -13,6 +14,8 @@ pub struct Config {
     pub hive_inactive_after: Duration,
     /// Address the HTTP API listens on.
     pub api_addr: SocketAddr,
+    /// Bearer tokens accepted by the API (BMS-7).
+    pub api_tokens: ApiTokens,
     pub monitoring: monitoring::Settings,
 }
 
@@ -35,6 +38,8 @@ impl Config {
                 "API_ADDR",
                 SocketAddr::from(([0, 0, 0, 0], 9000)),
             )?,
+            // No default: the API must never start without authorization.
+            api_tokens: config::required("BMS_API_TOKENS")?,
             monitoring: monitoring::Settings {
                 proximity_threshold_m: config::optional("PROXIMITY_THRESHOLD_M", 500.0)?,
             },

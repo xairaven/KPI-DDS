@@ -3,30 +3,57 @@
 //! Every route is declared once with `#[utoipa::path]`; `utoipa-axum` builds both
 //! the axum router and the OpenAPI document from it, so they cannot disagree.
 
+use crate::auth::{self, ApiTokens};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use bms_common::events::SagaStatus;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 use tracing::error;
-use utoipa::{OpenApi, ToSchema};
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::{Modify, OpenApi, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
 #[derive(OpenApi)]
-#[openapi(info(
-    title = "Battlefield Management System",
-    description = "Current state of hives and history of EW zones"
-))]
+#[openapi(
+    info(
+        title = "Battlefield Management System",
+        description = "Current state of hives and history of EW zones. \
+                       Every endpoint requires a bearer token (Authorize button)."
+    ),
+    modifiers(&BearerAuth),
+    security(("bearer" = []))
+)]
 struct ApiDoc;
 
-/// Router with all endpoints under `/api/v1` and Swagger UI under `/swagger`.
-pub fn router(pool: PgPool) -> axum::Router {
+/// Declares the bearer token scheme in the OpenAPI document, so Swagger UI shows
+/// the Authorize button and sends the token with every request.
+struct BearerAuth;
+
+impl Modify for BearerAuth {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        openapi
+            .components
+            .get_or_insert_default()
+            .add_security_scheme(
+                "bearer",
+                SecurityScheme::Http(
+                    HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build(),
+                ),
+            );
+    }
+}
+
+/// Router with all endpoints under `/api/v1` (token required) and Swagger UI under
+/// `/swagger` (public).
+pub fn router(pool: PgPool, tokens: ApiTokens) -> axum::Router {
     let (router, openapi) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .nest(
             "/api/v1",
@@ -41,7 +68,11 @@ pub fn router(pool: PgPool) -> axum::Router {
         .with_state(pool)
         .split_for_parts();
 
-    router.merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", openapi))
+    // The layer wraps only the routes added so far: Swagger UI, merged after it,
+    // stays public.
+    router
+        .layer(middleware::from_fn_with_state(tokens, auth::require_token))
+        .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", openapi))
 }
 
 /// Status decided by BMS (database enum `hive_status`).

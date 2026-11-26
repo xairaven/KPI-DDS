@@ -19,6 +19,7 @@ resource "local_sensitive_file" "k8s_secrets" {
     DECONFLICTION_DB_PASSWORD=${random_password.deconfliction_db.result}
     RABBITMQ_PASSWORD=${random_password.rabbitmq.result}
     REDIS_URL=redis://:${random_password.redis.result}@${local.aws_ip}:6379
+    BMS_API_TOKENS=${random_password.api_token.result}
   EOT
 }
 
@@ -38,6 +39,12 @@ output "azure_public_ip" {
 output "bms_url" {
   description = "BMS API (Swagger UI under /swagger/)."
   value       = "https://${azurerm_public_ip.bms.fqdn}"
+}
+
+output "api_token" {
+  description = "Bearer token of the BMS API: tofu output -raw api_token"
+  value       = random_password.api_token.result
+  sensitive   = true
 }
 
 output "lecturer_map_url" {

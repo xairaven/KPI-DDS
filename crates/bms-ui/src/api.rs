@@ -4,6 +4,8 @@
 // DTO fields are named exactly like the JSON of the bms-state API.
 #![expect(clippy::struct_field_names, reason = "Named like the API JSON")]
 
+use reqwest::StatusCode;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -60,9 +62,13 @@ pub struct Snapshot {
 }
 
 /// Polls the API forever, storing results in `snapshot` and asking egui to repaint.
-pub fn poll(base_url: &str, snapshot: &Mutex<Snapshot>, ctx: &egui::Context) {
+/// `token` is the API bearer token (requirement BMS-7).
+pub fn poll(
+    base_url: &str, token: Option<&str>, snapshot: &Mutex<Snapshot>, ctx: &egui::Context,
+) {
     let client = match reqwest::blocking::Client::builder()
         .timeout(REQUEST_TIMEOUT)
+        .default_headers(auth_headers(token))
         .build()
     {
         Ok(client) => client,
@@ -76,7 +82,7 @@ pub fn poll(base_url: &str, snapshot: &Mutex<Snapshot>, ctx: &egui::Context) {
         let result = fetch_all(&client, base_url);
         store(snapshot, |s| match result {
             Ok(fresh) => *s = fresh,
-            Err(error) => s.error = Some(error.to_string()),
+            Err(error) => s.error = Some(describe(&error)),
         });
         ctx.request_repaint();
         std::thread::sleep(POLL_INTERVAL);
@@ -101,6 +107,27 @@ fn fetch_all(
         updated_at: Some(Instant::now()),
         error: None,
     })
+}
+
+/// `Authorization: Bearer <token>`, sent with every request.
+fn auth_headers(token: Option<&str>) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let Some(Ok(mut value)) =
+        token.map(|token| HeaderValue::from_str(&format!("Bearer {token}")))
+    {
+        // Sensitive: reqwest keeps it out of its debug output.
+        value.set_sensitive(true);
+        headers.insert(AUTHORIZATION, value);
+    }
+    headers
+}
+
+fn describe(error: &reqwest::Error) -> String {
+    if error.status() == Some(StatusCode::UNAUTHORIZED) {
+        "Unauthorized: set BMS_API_TOKEN to a token accepted by the API".to_owned()
+    } else {
+        error.to_string()
+    }
 }
 
 fn store(snapshot: &Mutex<Snapshot>, change: impl FnOnce(&mut Snapshot)) {

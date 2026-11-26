@@ -33,7 +33,11 @@ spec:
               valueFrom: { secretKeyRef: { name: bms-secrets, key: STATE_DB_PASSWORD } }
             - name: DATABASE_URL
               value: postgres://bms_state:$(DB_PASSWORD)@postgres:5432/state
+            # Bearer tokens accepted by the API (BMS-7).
+            - name: BMS_API_TOKENS
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: BMS_API_TOKENS } }
           # Ready = the HTTP server answers; until then the Service sends it no traffic.
+          # The OpenAPI document needs no token, so the probe does not need one either.
           readinessProbe:
             httpGet: { path: /api-docs/openapi.json, port: http }
             periodSeconds: 5

@@ -17,13 +17,17 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, api_url: String) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>, api_url: String, api_token: Option<String>,
+    ) -> Self {
         let snapshot = Arc::new(Mutex::new(Snapshot::default()));
 
         let poller_snapshot = Arc::clone(&snapshot);
         let poller_url = api_url.clone();
         let ctx = cc.egui_ctx.clone();
-        std::thread::spawn(move || api::poll(&poller_url, &poller_snapshot, &ctx));
+        std::thread::spawn(move || {
+            api::poll(&poller_url, api_token.as_deref(), &poller_snapshot, &ctx);
+        });
 
         let mut map_memory = MapMemory::default();
         // A valid zoom level, so this cannot fail.

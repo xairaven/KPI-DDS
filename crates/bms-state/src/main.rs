@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod config;
 mod inactivity;
 mod monitoring;
@@ -58,7 +59,7 @@ async fn main() -> ExitCode {
         }) => {},
         () = inactivity::run(pool.clone(), config.hive_inactive_after, settings) => {},
         () = outbox::relay(pool.clone(), Publisher::new(config.rabbitmq_url.clone())) => {},
-        result = axum::serve(listener, api::router(pool.clone())) => {
+        result = axum::serve(listener, api::router(pool.clone(), config.api_tokens.clone())) => {
             if let Err(error) = result {
                 error!(%error, "HTTP API stopped");
             }

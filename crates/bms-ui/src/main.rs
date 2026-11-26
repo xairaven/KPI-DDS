@@ -10,6 +10,8 @@ const DEFAULT_API_URL: &str = "http://localhost:9000";
 fn main() -> eframe::Result {
     let api_url =
         std::env::var("BMS_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_owned());
+    // Bearer token of the API (BMS-7). Without it the API answers 401.
+    let api_token = std::env::var("BMS_API_TOKEN").ok();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -21,6 +23,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "BMS",
         options,
-        Box::new(|cc| Ok(Box::new(App::new(cc, api_url)))),
+        Box::new(|cc| Ok(Box::new(App::new(cc, api_url, api_token)))),
     )
 }
