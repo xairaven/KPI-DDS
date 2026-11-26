@@ -1,0 +1,68 @@
+@startuml deployment
+title Battle Management System — Deployment Diagram (AWS + Azure)
+
+skinparam shadowing false
+skinparam defaultFontName Sans
+left to right direction
+
+actor "Operator" as Operator
+
+node "Laptop" as Laptop {
+  artifact "bms-ui (egui)" as UI
+  artifact "kubectl, tofu" as Tools
+}
+
+cloud "GitHub" {
+  node "GitHub Actions" as Actions
+  database "ghcr.io\nbms-ingest, bms-state,\nbms-deconfliction, hivemind" as GHCR
+}
+
+cloud "AWS eu-north-1 (Stockholm)" {
+  node "EC2 t3.small\nUbuntu 26.04, Docker Compose\nElastic IP" as EC2 {
+    component "Redis\n(password)" as Redis
+    component "Communication Control" as CC
+    component "map-client" as Map
+    component "HiveMind 1, 2" as Hives
+  }
+}
+
+cloud "Azure denmarkeast (Copenhagen)" {
+  node "VM Standard_B2als_v2\nUbuntu 24.04, k3s\nStatic IP + DNS name" as VM {
+    component "Traefik\n(Let's Encrypt)" as Traefik
+    package "namespace bms" {
+      component "bms-ingest" as Ingest
+      component "bms-state" as State
+      component "bms-deconfliction" as Deconf
+      queue "RabbitMQ" as Rabbit
+      database "PostgreSQL\nstate, deconfliction" as PG
+      component "Jaeger" as Jaeger
+    }
+  }
+}
+
+Actions --> GHCR : push images
+EC2 ..> GHCR : pull hivemind
+VM ..> GHCR : pull bms-*
+
+Hives --> CC : HTTP
+CC --> Redis : PUBLISH
+Operator --> Map : HTTP :8081\n(admin IP only)
+Map --> CC : HTTP :8080
+
+Ingest --> Redis : SUBSCRIBE :6379\n(Azure IP only)
+Ingest --> CC : zones :8080
+Deconf --> CC : move :8080\n(Azure IP only)
+Ingest --> Rabbit
+Rabbit --> State
+Rabbit --> Deconf
+State --> PG
+Deconf --> PG
+Ingest ..> Jaeger : OTLP
+State ..> Jaeger : OTLP
+Deconf ..> Jaeger : OTLP
+
+UI --> Traefik : HTTPS :443
+Traefik --> State : HTTP :9000
+Tools --> VM : SSH :22, Kubernetes API :6443\n(admin IP only)
+Tools --> EC2 : SSH :22 (admin IP only)
+@enduml
