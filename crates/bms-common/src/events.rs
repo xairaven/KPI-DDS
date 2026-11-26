@@ -4,6 +4,7 @@
 //! `bms-ingest` translates lecturer messages into them; other services only see these.
 
 use crate::geo::GeoPoint;
+use crate::telemetry::{self, TraceContext};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -18,15 +19,21 @@ pub struct Envelope {
     pub event_id: Uuid,
     /// When the event happened (or was observed by BMS).
     pub occurred_at: DateTime<Utc>,
+    /// Trace context of the span that created the event, so the consumer
+    /// continues the same trace. Absent when tracing is disabled.
+    #[serde(default, skip_serializing_if = "TraceContext::is_empty")]
+    pub trace_context: TraceContext,
     #[serde(flatten)]
     pub event: Event,
 }
 
 impl Envelope {
+    /// Wraps the event, capturing the trace context of the current span.
     pub fn new(event: Event) -> Self {
         Self {
             event_id: Uuid::new_v4(),
             occurred_at: Utc::now(),
+            trace_context: telemetry::current_context(),
             event,
         }
     }

@@ -3,14 +3,14 @@
 
 use crate::cc_message::CcLocation;
 use crate::config::Config;
-use bms_common::events::{Event, Zone, ZoneId, ZoneRef, ZoneSnapshot};
+use bms_common::events::{Envelope, Event, Zone, ZoneId, ZoneRef, ZoneSnapshot};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, warn};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -40,7 +40,7 @@ type Zones = BTreeMap<ZoneId, Zone>;
 
 /// Polls zones forever. The first successful poll is sent as a snapshot,
 /// every later one as the differences to the previous poll.
-pub async fn run(config: &Config, events: mpsc::Sender<Event>) {
+pub async fn run(config: &Config, events: mpsc::Sender<Envelope>) {
     let url = format!("{}/api/v1/client/interferences", config.cc_url);
     let client = match reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build() {
         Ok(client) => client,
@@ -71,8 +71,17 @@ pub async fn run(config: &Config, events: mpsc::Sender<Event>) {
             .map_or_else(|| snapshot(&current), |previous| diff(previous, &current));
         known = Some(current);
 
-        for event in new_events {
-            if events.send(event).await.is_err() {
+        if new_events.is_empty() {
+            continue;
+        }
+        // A span only for rounds that found changes: an unchanged poll every
+        // few seconds would flood the traces with empty ones.
+        let span = info_span!("zones changed", count = new_events.len());
+        let envelopes: Vec<Envelope> = span.in_scope(|| {
+            new_events.into_iter().map(Envelope::new).collect()
+        });
+        for envelope in envelopes {
+            if events.send(envelope).await.is_err() {
                 debug!("Event channel closed, zone polling stopped");
                 return;
             }

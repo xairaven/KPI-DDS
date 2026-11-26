@@ -2,6 +2,7 @@
 
 use crate::config::{self, ConfigError};
 use crate::events::{EXCHANGE, Envelope};
+use crate::telemetry;
 use futures_util::StreamExt;
 use lapin::message::Delivery;
 use lapin::options::{
@@ -17,7 +18,7 @@ use lapin::{
 use std::fmt::Display;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 /// Delay before reconnecting after the connection to RabbitMQ was lost.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
@@ -173,7 +174,19 @@ where
     };
 
     let event_id = envelope.event_id;
-    match handle(envelope).await {
+    // One span per handled message, continuing the trace of whoever created
+    // the event. Spans of the handler (database work, sagas) become its children.
+    let span = info_span!(
+        "consume",
+        otel.name = %format!("consume {}", envelope.routing_key()),
+        otel.kind = "consumer",
+        messaging.system = "rabbitmq",
+        messaging.destination.name = %delivery.routing_key,
+        %event_id,
+    );
+    telemetry::continue_trace(&span, &envelope.trace_context);
+
+    match handle(envelope).instrument(span).await {
         Ok(()) => {
             delivery.ack(BasicAckOptions::default()).await?;
             debug!(%event_id, "Acknowledged");
@@ -223,7 +236,18 @@ impl Publisher {
 
     /// Publishes the envelope and waits until RabbitMQ confirms it has stored it.
     pub async fn publish(&mut self, envelope: &Envelope) -> Result<(), PublishError> {
-        let result = self.try_publish(envelope).await;
+        // Part of the trace that created the event: shows when it actually left
+        // the service (for the outbox, possibly much later than it was created).
+        let span = info_span!(
+            "publish",
+            otel.name = %format!("publish {}", envelope.routing_key()),
+            otel.kind = "producer",
+            messaging.system = "rabbitmq",
+            event_id = %envelope.event_id,
+        );
+        telemetry::continue_trace(&span, &envelope.trace_context);
+
+        let result = self.try_publish(envelope).instrument(span).await;
         if result.is_err() {
             self.connection = None;
         }

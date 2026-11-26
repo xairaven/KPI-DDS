@@ -28,10 +28,12 @@ use crate::planner::{self, Zone};
 use bms_common::events::{Event, ProximityAlert, SagaStatus, SagaUpdate};
 use bms_common::geo::GeoPoint;
 use bms_common::outbox;
+use bms_common::telemetry::{self, TraceContext};
+use sqlx::types::Json;
 use sqlx::{PgConnection, PgPool};
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
-use tracing::{error, info, warn};
+use tracing::{Instrument, Span, error, info, info_span, warn};
 
 /// How often the engine looks for work.
 const TICK: Duration = Duration::from_secs(1);
@@ -58,11 +60,13 @@ struct Saga {
     status: SagaStatus,
     attempt: i16,
     moving_hive_id: Option<String>,
+    trace_context: Json<TraceContext>,
 }
 
 macro_rules! saga_columns {
     () => {
-        "saga_id, alert_id, hive_id, other_hive_id, status, attempt, moving_hive_id"
+        "saga_id, alert_id, hive_id, other_hive_id, status, attempt, moving_hive_id,
+         trace_context"
     };
 }
 
@@ -87,8 +91,9 @@ pub async fn on_proximity(
     }
 
     let saga: Option<Saga> = sqlx::query_as(concat!(
-        "INSERT INTO sagas (alert_id, hive_id, other_hive_id, status, deadline, started_at)
-         VALUES ($1, $2, $3, 'started', now() + make_interval(secs => $4), now())
+        "INSERT INTO sagas (alert_id, hive_id, other_hive_id, status, deadline, started_at,
+                            trace_context)
+         VALUES ($1, $2, $3, 'started', now() + make_interval(secs => $4), now(), $5)
          ON CONFLICT (alert_id) DO NOTHING
          RETURNING ",
         saga_columns!()
@@ -97,6 +102,8 @@ pub async fn on_proximity(
     .bind(&alert.hive_id)
     .bind(&alert.other_hive_id)
     .bind(settings.command_timeout.as_secs_f64())
+    // The current span handles the alert: the engine's steps will continue its trace.
+    .bind(Json(telemetry::current_context()))
     .fetch_optional(&mut *db)
     .await?;
 
@@ -186,7 +193,9 @@ async fn tick(
     .fetch_all(pool)
     .await?;
     for saga in &started {
-        start_attempt(pool, cc, area, settings, saga).await?;
+        start_attempt(pool, cc, area, settings, saga)
+            .instrument(saga_span("saga start attempt", saga))
+            .await?;
     }
 
     let compensating: Vec<Saga> = sqlx::query_as(concat!(
@@ -198,7 +207,9 @@ async fn tick(
     .fetch_all(pool)
     .await?;
     for saga in &compensating {
-        compensate(pool, cc, settings, saga).await?;
+        compensate(pool, cc, settings, saga)
+            .instrument(saga_span("saga compensate", saga))
+            .await?;
     }
 
     let expired: Vec<Saga> = sqlx::query_as(concat!(
@@ -209,11 +220,28 @@ async fn tick(
     .fetch_all(pool)
     .await?;
     for saga in &expired {
-        let mut tx = pool.begin().await?;
-        on_deadline(&mut tx, saga, settings).await?;
-        tx.commit().await?;
+        async {
+            let mut tx = pool.begin().await?;
+            on_deadline(&mut tx, saga, settings).await?;
+            tx.commit().await
+        }
+        .instrument(saga_span("saga deadline expired", saga))
+        .await?;
     }
     Ok(())
+}
+
+/// A span for one engine step, in the trace of the alert that started the saga.
+fn saga_span(name: &'static str, saga: &Saga) -> Span {
+    let span = info_span!(
+        "saga step",
+        otel.name = name,
+        saga_id = saga.saga_id,
+        attempt = saga.attempt,
+        status = ?saga.status,
+    );
+    telemetry::continue_trace(&span, &saga.trace_context);
+    span
 }
 
 /// The current step did not finish in time.

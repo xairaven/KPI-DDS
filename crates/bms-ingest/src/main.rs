@@ -5,7 +5,7 @@ mod zone_poller;
 
 use crate::config::Config;
 use bms_common::broker::Publisher;
-use bms_common::events::{Envelope, Event};
+use bms_common::events::Envelope;
 use std::process::ExitCode;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -19,7 +19,8 @@ const PUBLISH_RETRY_DELAY: Duration = Duration::from_secs(2);
 #[tokio::main]
 async fn main() -> ExitCode {
     bms_common::config::load_dotenv();
-    bms_common::logging::init();
+    // Kept until the end of main: dropping it sends the remaining spans.
+    let _telemetry = bms_common::telemetry::init("bms-ingest");
 
     let config = match Config::from_env() {
         Ok(config) => config,
@@ -49,12 +50,11 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-async fn publish_events(mut publisher: Publisher, mut events: mpsc::Receiver<Event>) {
-    while let Some(event) = events.recv().await {
-        // The envelope (and its event_id) is created once, so retries publish the
-        // same event and consumers can recognize a duplicate.
-        let envelope = Envelope::new(event);
-
+/// Envelopes are created by the producers, inside the span of the message that
+/// caused them, and only once: retries publish the same event (same `event_id`),
+/// so consumers can recognize a duplicate.
+async fn publish_events(mut publisher: Publisher, mut events: mpsc::Receiver<Envelope>) {
+    while let Some(envelope) = events.recv().await {
         while let Err(error) = publisher.publish(&envelope).await {
             error!(%error, routing_key = envelope.routing_key(), "Publishing failed, retrying");
             tokio::time::sleep(PUBLISH_RETRY_DELAY).await;

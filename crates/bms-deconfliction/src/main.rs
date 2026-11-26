@@ -22,7 +22,8 @@ const AREA_RETRY_DELAY: Duration = Duration::from_secs(2);
 #[tokio::main]
 async fn main() -> ExitCode {
     bms_common::config::load_dotenv();
-    bms_common::logging::init();
+    // Kept until the end of main: dropping it sends the remaining spans.
+    let _telemetry = bms_common::telemetry::init("bms-deconfliction");
 
     let config = match Config::from_env() {
         Ok(config) => config,

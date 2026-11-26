@@ -2,18 +2,18 @@
 
 use crate::cc_message::CcMessage;
 use crate::config::Config;
-use bms_common::events::Event;
+use bms_common::events::Envelope;
 use futures_util::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, warn};
 
 /// Delay before reconnecting after the connection to Redis was lost.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
 /// Listens to the channel forever, reconnecting when Redis becomes unavailable.
 /// Each recognized message is translated and sent to `events`.
-pub async fn run(config: &Config, events: mpsc::Sender<Event>) {
+pub async fn run(config: &Config, events: mpsc::Sender<Envelope>) {
     loop {
         match listen(config, &events).await {
             Ok(()) => warn!("Redis subscription ended"),
@@ -29,7 +29,7 @@ pub async fn run(config: &Config, events: mpsc::Sender<Event>) {
     }
 }
 
-async fn listen(config: &Config, events: &mpsc::Sender<Event>) -> redis::RedisResult<()> {
+async fn listen(config: &Config, events: &mpsc::Sender<Envelope>) -> redis::RedisResult<()> {
     let client = redis::Client::open(config.redis_url.as_str())?;
     let mut pubsub = client.get_async_pubsub().await?;
     pubsub.subscribe(&config.redis_channel).await?;
@@ -54,7 +54,17 @@ async fn listen(config: &Config, events: &mpsc::Sender<Event>) -> redis::RedisRe
         };
 
         if let Some(event) = message.into_event() {
-            if events.send(event).await.is_err() {
+            // The root span of the event's trace: everything that happens because
+            // of this bus message, in any service, is attached to it.
+            let span = info_span!(
+                "receive",
+                otel.name = %format!("receive {}", config.redis_channel),
+                otel.kind = "consumer",
+                messaging.system = "redis",
+                event = event.routing_key(),
+            );
+            let envelope = span.in_scope(|| Envelope::new(event));
+            if events.send(envelope).await.is_err() {
                 return Ok(());
             }
         } else {

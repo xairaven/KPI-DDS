@@ -19,7 +19,8 @@ const QUEUE: QueueSpec = QueueSpec {
 #[tokio::main]
 async fn main() -> ExitCode {
     bms_common::config::load_dotenv();
-    bms_common::logging::init();
+    // Kept until the end of main: dropping it sends the remaining spans.
+    let _telemetry = bms_common::telemetry::init("bms-state");
 
     let config = match Config::from_env() {
         Ok(config) => config,

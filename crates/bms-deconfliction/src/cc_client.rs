@@ -1,6 +1,8 @@
 //! Client of Communication Control's client API (lecturer's format: `PascalCase` JSON).
 
 use bms_common::geo::GeoPoint;
+use bms_common::telemetry;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -54,10 +56,12 @@ impl CcClient {
     }
 
     /// `GET /api/v1/client/area`.
+    #[tracing::instrument(name = "GET /api/v1/client/area", skip_all, fields(otel.kind = "client"))]
     pub async fn area(&self) -> reqwest::Result<Area> {
         let area: AreaResponse = self
             .http
             .get(format!("{}/api/v1/client/area", self.base_url))
+            .headers(trace_headers())
             .send()
             .await?
             .error_for_status()?
@@ -78,11 +82,17 @@ impl CcClient {
     /// Communication Control answers `202 Accepted` before contacting the hive,
     /// so success here does not mean the command was delivered: delivery is
     /// confirmed by the `hive.moved` event.
+    #[tracing::instrument(
+        name = "PATCH /api/v1/client/hive",
+        skip_all,
+        fields(otel.kind = "client", hive_id = %hive_id, destination = ?destination)
+    )]
     pub async fn move_hive(
         &self, hive_id: &str, destination: GeoPoint,
     ) -> reqwest::Result<()> {
         self.http
             .patch(format!("{}/api/v1/client/hive", self.base_url))
+            .headers(trace_headers())
             .json(&MoveRequest {
                 hives: [hive_id],
                 destination: Location {
@@ -95,4 +105,18 @@ impl CcClient {
             .error_for_status()?;
         Ok(())
     }
+}
+
+/// W3C `traceparent` header of the current span. Communication Control does not
+/// export traces, but any traced server would continue the same trace from it.
+fn trace_headers() -> HeaderMap {
+    telemetry::current_context()
+        .into_iter()
+        .filter_map(|(name, value)| {
+            Some((
+                HeaderName::try_from(name).ok()?,
+                HeaderValue::try_from(value).ok()?,
+            ))
+        })
+        .collect()
 }
