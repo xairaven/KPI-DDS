@@ -5,7 +5,7 @@ Labs of the course «Проектування розподілених сист�
 **Author:** Kovalov Oleksandr, group ІМ-51мн
 
 > [!NOTE]
-> Work in progress: deployment to the cloud (lab 5) is being done.
+> Work in progress.
 
 Battlefield Management System (BMS) observes drone swarms (hives) of the lecturer's
 [Hive Emulator](https://gitlab.com/kzotkin/hiveemulator). It keeps the state of every
@@ -134,6 +134,53 @@ kind delete cluster --name bms                                         # remove 
 
 After rebuilding an image, load it again and restart the deployment:
 `kubectl -n bms rollout restart deploy/bms-state`.
+
+### Cloud: AWS + Azure
+
+```
+        AWS eu-north-1 (EC2 t3.small)               Azure denmarkeast (VM B2als_v2)
+  ┌────────────────────────────────────┐      ┌────────────────────────────────────┐
+  │ Docker Compose:                    │      │ k3s (Kubernetes):                  │
+  │  Redis (password) ◄────────────────┼──────┤  bms-ingest                        │
+  │  Communication Control ◄───────────┼──────┤  bms-deconfliction                 │
+  │  map-client, HiveMind ×2           │      │  bms-state ◄── HTTPS (Traefik,     │
+  │                                    │      │  RabbitMQ, PostgreSQL, Jaeger      │
+  └────────────────────────────────────┘      └──────────── Let's Encrypt) ────────┘
+   firewall: Redis and CC only from Azure       firewall: 80/443 for all; SSH and
+   (CC and the map also from the admin)         the Kubernetes API from the admin
+```
+
+Infrastructure is code ([`infra/cloud`](infra/cloud), Terraform / OpenTofu), images come from
+GitHub Container Registry, built by [GitHub Actions](.github/workflows/images.yml).
+
+Requirements: `aws configure` (an IAM user with EC2 access), `az login`, an SSH key in
+`~/.ssh/bms-cloud/bms-cloud`, and once per Azure subscription:
+`az provider register --namespace Microsoft.Network` and `--namespace Microsoft.Compute`.
+
+```bash
+cd infra/cloud
+echo "azure_subscription_id = \"$(az account show --query id -o tsv)\"" > terraform.tfvars
+tofu init
+tofu apply        # servers, firewalls, addresses; writes infra/k8s/overlays/azure/{cloud,secrets}.env
+tofu output       # addresses, URLs, SSH commands
+
+# kubeconfig of the k3s cluster (after cloud-init has installed k3s)
+ssh -i ~/.ssh/bms-cloud/bms-cloud azureuser@$(tofu output -raw azure_public_ip) sudo cat /etc/rancher/k3s/k3s.yaml \
+  | sed "s/127.0.0.1/$(tofu output -raw bms_url | sed 's|https://||')/" > kubeconfig
+cd ../..
+
+export KUBECONFIG=infra/cloud/kubeconfig
+kubectl apply -k infra/k8s/overlays/azure
+kubectl -n bms get pods
+
+BMS_API_URL=$(tofu -chdir=infra/cloud output -raw bms_url) cargo run -p bms-ui --release
+kubectl -n bms port-forward svc/jaeger 16686     # Jaeger UI at http://localhost:16686
+
+tofu -chdir=infra/cloud destroy                   # remove everything
+```
+
+The firewalls allow SSH and the admin UIs only from the address `tofu apply` was run from;
+if it changes, run `tofu apply` again.
 
 ### Addresses
 

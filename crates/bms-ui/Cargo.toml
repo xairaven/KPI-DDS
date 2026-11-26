@@ -19,5 +19,6 @@ workspace = true
 eframe.workspace = true
 egui.workspace = true
 walkers.workspace = true
-reqwest = { workspace = true, features = ["blocking"] }
+# rustls: the API in the cloud is served over HTTPS.
+reqwest = { workspace = true, features = ["blocking", "rustls"] }
 serde.workspace = true

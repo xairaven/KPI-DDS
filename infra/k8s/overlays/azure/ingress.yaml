@@ -1,0 +1,28 @@
+# The BMS API from the internet: https://<BMS_HOST>/ -> Service bms-state:9000.
+# Traefik (built into k3s) terminates TLS with a Let's Encrypt certificate.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bms-state
+  namespace: bms
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # The certificate resolver defined in traefik-config.yaml.
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: BMS_HOST # replaced from cloud.env
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bms-state
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - BMS_HOST # replaced from cloud.env

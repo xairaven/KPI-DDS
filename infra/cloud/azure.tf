@@ -125,9 +125,12 @@ resource "azurerm_linux_virtual_machine" "bms" {
     disk_size_gb         = 30
   }
 
+  # Ubuntu 24.04 LTS: the common base for k3s. (The first VM, on 26.04, ended up
+  # in a state where PostgreSQL processes were not woken by each other and only
+  # moved on after their timeouts; a re-created VM, with the same kernel, works.)
   source_image_reference {
     publisher = "Canonical"
-    offer     = "ubuntu-26_04-lts"
+    offer     = "ubuntu-24_04-lts"
     sku       = "server"
     version   = "latest"
   }

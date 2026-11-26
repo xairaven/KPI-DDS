@@ -1,0 +1,62 @@
+# Azure: k3s on the VM created by infra/cloud. The lecturer's system runs on AWS.
+#
+#   cd infra/cloud && tofu apply           # writes cloud.env and secrets.env here
+#   export KUBECONFIG=infra/cloud/kubeconfig
+#   kubectl apply -k infra/k8s/overlays/azure
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - ingress.yaml
+  - traefik-config.yaml
+
+# Images built by GitHub Actions. "latest" is pulled again on every pod start.
+images:
+  - name: bms-ingest
+    newName: ghcr.io/xairaven/bms-ingest
+    newTag: latest
+  - name: bms-state
+    newName: ghcr.io/xairaven/bms-state
+    newTag: latest
+  - name: bms-deconfliction
+    newName: ghcr.io/xairaven/bms-deconfliction
+    newTag: latest
+
+# Both files are written by "tofu apply" in infra/cloud and are not committed.
+configMapGenerator:
+  - name: bms-config
+    namespace: bms
+    behavior: merge
+    envs:
+      - cloud.env # BMS_HOST, CC_URL
+
+secretGenerator:
+  - name: bms-secrets
+    namespace: bms
+    envs:
+      - secrets.env # passwords and REDIS_URL (it contains the Redis password)
+
+patches:
+  # bms-ingest takes REDIS_URL from the Secret. A variable in "env" wins over
+  # the same one from "envFrom" (the ConfigMap).
+  - target: { kind: Deployment, name: bms-ingest }
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: REDIS_URL
+          valueFrom:
+            secretKeyRef: { name: bms-secrets, key: REDIS_URL }
+
+# The public host name (from cloud.env) goes into the Ingress.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: bms-config
+      fieldPath: data.BMS_HOST
+    targets:
+      - select: { kind: Ingress, name: bms-state }
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0

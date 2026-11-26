@@ -1,0 +1,31 @@
+# Extra settings for the Traefik that k3s installs from its Helm chart.
+# k3s merges these values into the chart and re-installs Traefik.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    # Let's Encrypt: Traefik proves it controls the domain by answering an HTTP
+    # request on port 80 (HTTP-01 challenge), then gets and renews certificates.
+    certificatesResolvers:
+      letsencrypt:
+        acme:
+          storage: /data/acme.json
+          httpChallenge:
+            entryPoint: web
+    # Keeps the certificates across Traefik restarts (Let's Encrypt limits
+    # how many certificates one domain may get per week).
+    persistence:
+      enabled: true
+    # Everything on plain HTTP is redirected to HTTPS (except the ACME
+    # challenge, which Traefik answers itself).
+    ports:
+      web:
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true

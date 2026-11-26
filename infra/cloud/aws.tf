@@ -24,7 +24,7 @@ resource "aws_key_pair" "bms" {
 # The firewall of the server. Everything not allowed here is dropped.
 resource "aws_security_group" "hiveemulator" {
   name        = "bms-hiveemulator"
-  description = "Lecturer's Hive Emulator"
+  description = "Hive Emulator of the lecturer"
   vpc_id      = data.aws_vpc.default.id
 }
 
@@ -66,7 +66,7 @@ resource "aws_vpc_security_group_ingress_rule" "redis" {
 
 resource "aws_vpc_security_group_ingress_rule" "map" {
   security_group_id = aws_security_group.hiveemulator.id
-  description       = "Lecturer's web map from the admin"
+  description       = "Web map of the lecturer, from the admin"
   cidr_ipv4         = local.admin_cidr
   ip_protocol       = "tcp"
   from_port         = 8081
