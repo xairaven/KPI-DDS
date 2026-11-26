@@ -1,0 +1,73 @@
+# PostgreSQL: one server, a database and a user per service.
+# StatefulSet instead of Deployment: a stable name (postgres-0) and its own
+# volume that stays with it across restarts.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: POSTGRES_PASSWORD } }
+            - name: STATE_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: STATE_DB_PASSWORD } }
+            - name: DECONFLICTION_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: DECONFLICTION_DB_PASSWORD } }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres"] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
+            # Executable: the image runs *.sh scripts instead of sourcing them
+            # into its own entrypoint.
+            defaultMode: 0555
+  # Kubernetes creates the volume (PersistentVolumeClaim) for the pod from this
+  # template, using the cluster's default storage.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432

@@ -1,0 +1,17 @@
+# Local Kubernetes cluster in Docker:
+#   kind create cluster --config infra/k8s/overlays/kind/kind-cluster.yaml
+#
+# The node is a Docker container, so NodePorts are only reachable inside Docker.
+# These mappings publish them on the host, like "ports:" in compose.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: bms
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30900   # bms-state API
+        hostPort: 9000
+      - containerPort: 30686   # Jaeger UI
+        hostPort: 16686
+      - containerPort: 30672   # RabbitMQ management
+        hostPort: 15672

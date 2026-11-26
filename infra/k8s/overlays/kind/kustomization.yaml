@@ -1,0 +1,61 @@
+# Local cluster (kind). The lecturer's system runs in infra/hiveemulator (compose);
+# the kind node is attached to its Docker network, so pods reach Redis and
+# Communication Control by their container names.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Also for the objects generated here (the Secret), not only those from base.
+namespace: bms
+
+resources:
+  - ../../base
+
+# Images built locally and loaded into the node with "kind load docker-image".
+images:
+  - name: bms-ingest
+    newTag: local
+  - name: bms-state
+    newTag: local
+  - name: bms-deconfliction
+    newTag: local
+
+configMapGenerator:
+  - name: bms-config
+    behavior: merge
+    literals:
+      - REDIS_URL=redis://redis:6379
+      - CC_URL=http://communication-control:8080
+
+secretGenerator:
+  # Development passwords (the same as in infra/bms); real environments
+  # take theirs from a file that is not committed.
+  - name: bms-secrets
+    envs:
+      - secrets.env
+
+patches:
+  # Publish the UIs through NodePorts (mapped to the host in kind-cluster.yaml).
+  - target: { kind: Service, name: bms-state }
+    patch: |
+      - op: add
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30900
+  - target: { kind: Service, name: jaeger }
+    patch: |
+      - op: add
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30686
+  - target: { kind: Service, name: rabbitmq }
+    patch: |
+      - op: add
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/1/nodePort
+        value: 30672

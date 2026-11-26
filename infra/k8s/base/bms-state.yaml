@@ -1,0 +1,68 @@
+# bms-state: projection, monitoring and the REST API.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bms-state
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bms-state
+  template:
+    metadata:
+      labels:
+        app: bms-state
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: bms-state
+          image: bms-state
+          ports:
+            - name: http
+              containerPort: 9000
+          envFrom:
+            - configMapRef: { name: bms-config }
+          env:
+            - name: RABBITMQ_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: RABBITMQ_PASSWORD } }
+            - name: RABBITMQ_URL
+              value: amqp://bms:$(RABBITMQ_PASSWORD)@rabbitmq:5672
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: STATE_DB_PASSWORD } }
+            - name: DATABASE_URL
+              value: postgres://bms_state:$(DB_PASSWORD)@postgres:5432/state
+          # Ready = the HTTP server answers; until then the Service sends it no traffic.
+          readinessProbe:
+            httpGet: { path: /api-docs/openapi.json, port: http }
+            periodSeconds: 5
+          # Started = the HTTP server is up. It starts only after the database is
+          # reachable, which may take a while; until then the other probes wait.
+          startupProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          # Alive = the process still accepts connections; otherwise it is restarted.
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bms-state
+spec:
+  selector:
+    app: bms-state
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http

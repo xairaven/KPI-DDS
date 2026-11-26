@@ -1,0 +1,43 @@
+# bms-deconfliction: the deconfliction saga.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bms-deconfliction
+spec:
+  # One instance: the saga engine and the outbox relay are not built for
+  # several instances yet (see docs/data-model.md, limitations).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bms-deconfliction
+  template:
+    metadata:
+      labels:
+        app: bms-deconfliction
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: bms-deconfliction
+          image: bms-deconfliction
+          envFrom:
+            - configMapRef: { name: bms-config }
+          env:
+            - name: RABBITMQ_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: RABBITMQ_PASSWORD } }
+            - name: RABBITMQ_URL
+              value: amqp://bms:$(RABBITMQ_PASSWORD)@rabbitmq:5672
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: DECONFLICTION_DB_PASSWORD } }
+            - name: DATABASE_URL
+              value: postgres://bms_deconfliction:$(DB_PASSWORD)@postgres:5432/deconfliction
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }

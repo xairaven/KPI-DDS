@@ -1,0 +1,32 @@
+# BMS in Kubernetes: what is common to every environment.
+# Environments (overlays/kind, later the clouds) add the addresses of the
+# lecturer's system, the passwords and the way the API is exposed.
+#
+#   kubectl apply -k infra/k8s/overlays/kind
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: bms
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: bms
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - rabbitmq.yaml
+  - jaeger.yaml
+  - bms-ingest.yaml
+  - bms-state.yaml
+  - bms-deconfliction.yaml
+
+configMapGenerator:
+  # Settings shared by the services. Overlays add REDIS_URL and CC_URL.
+  - name: bms-config
+    literals:
+      - RUST_LOG=info
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+  - name: postgres-init
+    files:
+      - init.sh=postgres-init.sh

@@ -1,0 +1,41 @@
+# bms-ingest: Redis bus and EW zones -> RabbitMQ.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bms-ingest
+spec:
+  # Exactly one: a second instance would publish every bus message twice.
+  replicas: 1
+  # Recreate: on update the old pod is stopped before the new one starts.
+  # The default (RollingUpdate) would briefly run both.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bms-ingest
+  template:
+    metadata:
+      labels:
+        app: bms-ingest
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: bms-ingest
+          image: bms-ingest
+          envFrom:
+            - configMapRef: { name: bms-config }
+          env:
+            - name: RABBITMQ_PASSWORD
+              valueFrom: { secretKeyRef: { name: bms-secrets, key: RABBITMQ_PASSWORD } }
+            # $(NAME) refers to a variable defined above.
+            - name: RABBITMQ_URL
+              value: amqp://bms:$(RABBITMQ_PASSWORD)@rabbitmq:5672
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }

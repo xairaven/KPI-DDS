@@ -112,6 +112,29 @@ docker compose -f infra/bms/docker-compose.yml down -v    # stop and wipe data (
 docker compose -f infra/hiveemulator/docker-compose.yml restart hive-1 hive-2   # hives back to start
 ```
 
+### Kubernetes (kind)
+
+The same BMS in a local Kubernetes cluster ([`infra/k8s`](infra/k8s): `base` + `overlays/kind`).
+It uses the same host ports, so stop the BMS compose first.
+
+```bash
+docker compose -f infra/hiveemulator/docker-compose.yml up -d
+docker compose -f infra/bms/docker-compose.yml --profile app stop
+docker compose -f infra/bms/docker-compose.yml --profile app build      # images bms-*:local
+
+kind create cluster --config infra/k8s/overlays/kind/kind-cluster.yaml
+docker network connect hiveemulator_default bms-control-plane         # reach Redis and CC by name
+kind load docker-image bms-ingest:local bms-state:local bms-deconfliction:local --name bms
+kubectl apply -k infra/k8s/overlays/kind
+
+kubectl -n bms get pods
+kubectl -n bms logs deploy/bms-state -f
+kind delete cluster --name bms                                         # remove everything
+```
+
+After rebuilding an image, load it again and restart the deployment:
+`kubectl -n bms rollout restart deploy/bms-state`.
+
 ### Addresses
 
 | What | Address | Credentials |
