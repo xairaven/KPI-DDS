@@ -23,6 +23,7 @@ entity "sagas" as sagas {
     deadline : TIMESTAMPTZ
   * started_at : TIMESTAMPTZ
     finished_at : TIMESTAMPTZ
+  * trace_context : JSONB
 }
 
 entity "saga_steps" as steps {

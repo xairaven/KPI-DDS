@@ -187,6 +187,7 @@ positions and active zones, no statuses and no history.
 | `deadline`          | `TIMESTAMPTZ`      | yes  | The current step must finish by then; NULL when finished |
 | `started_at`        | `TIMESTAMPTZ`      | no   | |
 | `finished_at`       | `TIMESTAMPTZ`      | yes  | Set exactly for `completed` and `failed` (`CHECK`) |
+| `trace_context`     | `JSONB`            | no   | W3C trace context of the alert; the engine continues its trace (migration 0003) |
 
 ### `saga_steps` — journal of every saga transition
 

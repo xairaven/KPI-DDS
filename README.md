@@ -1,29 +1,185 @@
-# Design of Distributed Systems
+# Battlefield Management System
 
-University Labs.
+Labs of the course «Проектування розподілених систем» (Design of Distributed Systems), KPI.
 
-**Author:** Kovalov Oleksandr
-
-**Group:** ІМ-51мн
+**Author:** Kovalov Oleksandr, group ІМ-51мн
 
 > [!NOTE]
-> Work in Progress.
+> Work in progress: deployment to the cloud (lab 5) is being done.
 
-- Communication Channel Swagger: http://localhost:8080/swagger
-- Map: http://localhost:8081
+Battlefield Management System (BMS) observes drone swarms (hives) of the lecturer's
+[Hive Emulator](https://gitlab.com/kzotkin/hiveemulator). It keeps the state of every
+hive, watches the electronic warfare (EW) zones, raises alerts when a hive enters a zone
+or two hives come too close, and separates such hives automatically with a saga.
 
-- RabbitMQ Admin: http://localhost:15672 (Dev Creds: bms / bms)
-- BMS Swagger: http://localhost:9000/swagger/
+![Component diagram](docs/diagrams/png/component.png)
 
-### Docker
+## Features
 
-```bash
-docker compose -f infra/hiveemulator/docker-compose.yml up -d   # start cc & hivemind
-docker compose -f infra/hiveemulator/docker-compose.yml down    # stop cc & hivemind
+- **State reconstruction** from the Communication Control message bus (Redis Pub/Sub):
+  position, speed, `moving` / `stopped` / `inactive` / `disconnected` status, kept in PostgreSQL.
+- **EW zones** polled from Communication Control, with history (`active_from` / `active_to`).
+- **Monitoring**: a hive inside an EW zone, two hives closer than 500 m (with hysteresis).
+- **Deconfliction saga**: commands one hive to a safe point; on failure compensates
+  (sends it back) and tries plan B with the other hive.
+- **Reliable messaging**: RabbitMQ with durable quorum queues, publisher confirms,
+  at-least-once delivery, idempotent consumers, transactional outbox.
+- **REST API** with OpenAPI / Swagger UI.
+- **Desktop client** (egui) with an OpenStreetMap map of hives, zones, alerts and sagas.
+- **Distributed tracing** (OpenTelemetry → Jaeger): one bus message can be followed
+  through every service, including the saga's command to Communication Control.
+
+## Architecture
+
+| Component | Role |
+|---|---|
+| `bms-ingest` | Subscribes to Redis `HiveChannel`, polls EW zones, translates both into BMS events and publishes them to RabbitMQ. Runs as a **single instance**. |
+| `bms-state` | Projects events into its database (`state`), detects zone crossings, proximity and inactive hives, serves the REST API on port 9000. |
+| `bms-deconfliction` | Orchestrates the deconfliction saga in its own database (`deconfliction`) and sends move commands to Communication Control. |
+| `bms-ui` | Desktop client of the `bms-state` API. |
+| `bms-common` | Library shared by the services: events, RabbitMQ, database, outbox, geometry, telemetry. |
+
+Services talk only through the RabbitMQ topic exchange `bms.events`; each has its own
+database and database user (database per service).
+
+| Routing key | Producer | Consumers |
+|---|---|---|
+| `hive.connected`, `hive.reconnected`, `hive.disconnected`, `hive.telemetry`, `hive.moved`, `hive.stopped` | ingest | state; deconfliction (`hive.telemetry`, `hive.moved`) |
+| `zone.activated`, `zone.deactivated`, `zone.snapshot` | ingest | state, deconfliction |
+| `alert.zone_entered`, `alert.proximity` | state | deconfliction (`alert.proximity`) |
+| `saga.<status>` | deconfliction | state |
+
+More documentation:
+
+- [Hive Emulator protocol](docs/hive-emulator-protocol.md): what Communication Control sends and accepts.
+- [Data model](docs/data-model.md): both databases, guarantees and known limitations.
+- [Diagrams](docs/diagrams): PlantUML sources and rendered PNGs.
+
+## Repository layout
+
+```
+crates/            Rust workspace: bms-common, bms-ingest, bms-state, bms-deconfliction, bms-ui
+Dockerfile         one multi-stage Dockerfile for the three services (--target <service>)
+infra/hiveemulator lecturer's system: Redis, Communication Control, map, HiveMinds (git submodule + compose)
+infra/bms          RabbitMQ, PostgreSQL, Jaeger and the BMS services (compose)
+docs/              protocol notes, data model, diagrams
 ```
 
+## Running locally
+
+Requirements: Docker with Compose, Rust 1.100 (installed automatically by `rust-toolchain.toml`).
+
 ```bash
-docker compose -f infra/bms/docker-compose.yml up -d            # start bms
-docker compose -f infra/bms/docker-compose.yml down             # stop (data kept)
-docker compose -f infra/bms/docker-compose.yml down -v          # stop AND wipe data (re-runs init.sql next time)
+git clone --recurse-submodules <this repository>
+# or, in an existing clone:
+git submodule update --init
 ```
+
+**1. The lecturer's system** (Redis, Communication Control, map, two hives):
+
+```bash
+docker compose -f infra/hiveemulator/docker-compose.yml up -d
+```
+
+**2. BMS** — everything in containers:
+
+```bash
+docker compose -f infra/bms/docker-compose.yml --profile app up -d --build
+```
+
+Without `--profile app` only the infrastructure starts (RabbitMQ, PostgreSQL, Jaeger),
+and the services can be run with cargo instead, e.g. for debugging:
+
+```bash
+cargo run -p bms-ingest
+cargo run -p bms-state
+cargo run -p bms-deconfliction
+```
+
+**3. The desktop client:**
+
+```bash
+cargo run -p bms-ui --release
+```
+
+Useful commands:
+
+```bash
+docker compose -f infra/bms/docker-compose.yml --profile app logs -f bms-state   # logs of one service
+docker compose -f infra/bms/docker-compose.yml --profile app stop bms-ingest bms-state bms-deconfliction
+docker compose -f infra/bms/docker-compose.yml down       # stop, data kept
+docker compose -f infra/bms/docker-compose.yml down -v    # stop and wipe data (re-runs init.sql)
+docker compose -f infra/hiveemulator/docker-compose.yml restart hive-1 hive-2   # hives back to start
+```
+
+### Addresses
+
+| What | Address | Credentials |
+|---|---|---|
+| BMS API (Swagger UI) | http://localhost:9000/swagger/ | — |
+| Jaeger (traces) | http://localhost:16686 | — |
+| RabbitMQ management | http://localhost:15672 | `bms` / `bms` |
+| PostgreSQL | `localhost:5432`, databases `state`, `deconfliction` | `bms_state` / `bms_state`, `bms_deconfliction` / `bms_deconfliction` |
+| Communication Control (Swagger UI) | http://localhost:8080/swagger | — |
+| Lecturer's web map | http://localhost:8081 | — |
+
+All credentials are for local development only.
+
+### Configuration
+
+Every service reads environment variables (or a `.env` file); the defaults fit the local setup.
+
+| Variable | Used by | Default |
+|---|---|---|
+| `RABBITMQ_URL` | ingest, state, deconfliction | `amqp://bms:bms@localhost:5672` |
+| `REDIS_URL` | ingest | `redis://localhost:6379` |
+| `REDIS_CHANNEL` | ingest | `HiveChannel` |
+| `CC_URL` | ingest, deconfliction | `http://localhost:8080` |
+| `ZONE_POLL_INTERVAL_MS` | ingest | `2000` |
+| `DATABASE_URL` | state, deconfliction | `postgres://bms_state:bms_state@localhost:5432/state`, `postgres://bms_deconfliction:bms_deconfliction@localhost:5432/deconfliction` |
+| `API_ADDR` | state | `0.0.0.0:9000` |
+| `HIVE_INACTIVE_AFTER_SECS` | state | `30` |
+| `PROXIMITY_THRESHOLD_M` | state | `500` |
+| `SAFE_DISTANCE_M` | deconfliction | `1000` |
+| `SEPARATION_M` | deconfliction | `600` |
+| `COMMAND_TIMEOUT_SECS` | deconfliction | `15` |
+| `SEPARATION_TIMEOUT_SECS` | deconfliction | `120` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | ingest, state, deconfliction | unset: traces are not exported. `http://localhost:4318` sends them to the local Jaeger |
+| `RUST_LOG` | all | `info` |
+| `BMS_API_URL` | ui | `http://localhost:9000` |
+
+### Tracing
+
+Each event carries the W3C trace context of the span that created it, so a consumer
+continues the producer's trace. Sagas store the context of their alert, so the commands
+the saga engine sends later stay in the same trace. In Jaeger, pick the service
+`bms-deconfliction` and the operation `saga start attempt` to see a whole chain:
+
+```
+bms-ingest         receive HiveChannel
+bms-ingest         publish hive.telemetry
+bms-state          consume hive.telemetry
+bms-state          publish alert.proximity        (transactional outbox)
+bms-deconfliction  consume alert.proximity        (saga created)
+bms-deconfliction  saga start attempt             (engine tick)
+bms-deconfliction  PATCH /api/v1/client/hive      (command to Communication Control)
+bms-state          consume saga.command_sent
+```
+
+## Development
+
+```bash
+cargo build
+cargo test
+cargo clippy --all-targets   # pedantic + nursery lints, no unwrap/expect/panic outside tests
+```
+
+Diagrams are rendered with PlantUML:
+
+```bash
+plantuml -tpng -o ../png docs/diagrams/plantuml/*.puml
+```
+
+## License
+
+MIT (declared in `Cargo.toml`).
