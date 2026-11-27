@@ -120,6 +120,13 @@ resource "aws_instance" "hiveemulator" {
   tags = {
     Name = "bms-hiveemulator"
   }
+
+  lifecycle {
+    # The image is chosen once, when the server is created. Without this, every
+    # new Ubuntu build (published about weekly) would make "tofu apply" replace
+    # the running server: new host keys, the lecturer's system started over.
+    ignore_changes = [ami]
+  }
 }
 
 resource "aws_eip_association" "hiveemulator" {
